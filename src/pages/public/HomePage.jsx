@@ -1,15 +1,42 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, MapPin, Leaf, Egg, Fish, Apple, Carrot, Heart, ArrowRight, Truck, ShoppingBag } from 'lucide-react'
-import { FARMS, CATEGORIES } from '../../lib/mockData'
+import { Search, MapPin, Leaf, Truck, ShoppingBag } from 'lucide-react'
+import { useFarms } from '../../hooks/useFarms'
+import { useCategories } from '../../hooks/useCategories'
+import { ICON_MAP } from '../../lib/icons'
 import { styles } from '../../lib/styles'
 
-const CATEGORY_ICONS = { eggs: Egg, vegetables: Carrot, microgreens: Leaf, honey: Heart, seafood: Fish, fruit: Apple }
+function formatDistance(miles) {
+  if (miles < 1) return '< 1 mile away'
+  if (miles === 1.0) return '1 mile away'
+  return `${miles} miles away`
+}
+
+function FarmCardSkeleton() {
+  return (
+    <div className="bg-white/80 rounded-2xl overflow-hidden border border-stone-200/50 animate-pulse">
+      <div className="h-48 bg-stone-200" />
+      <div className="p-5 space-y-2">
+        <div className="h-4 bg-stone-200 rounded w-3/4" />
+        <div className="h-3 bg-stone-100 rounded w-1/2" />
+      </div>
+    </div>
+  )
+}
 
 export default function HomePage() {
   const navigate = useNavigate()
   const [searchQuery, setSearchQuery] = useState('')
-  const featuredFarms = FARMS.filter(f => f.featured)
+
+  const { farms, loading: farmsLoading, userLocation } = useFarms()
+  const { categories, loading: catsLoading } = useCategories()
+
+  const filtered = searchQuery.trim()
+    ? farms.filter(f =>
+        f.farm_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        f.tagline?.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : farms
 
   return (
     <div className={styles.pageBackground}>
@@ -33,15 +60,12 @@ export default function HomePage() {
             </div>
             <div className="flex items-center gap-4">
               <button
-                onClick={() => navigate('/dashboard')}
+                onClick={() => navigate('/signup?role=farmer')}
                 className="text-stone-600 hover:text-green-700 font-medium transition-colors"
               >
-                Farmers
+                Sell on Kern Harvest
               </button>
-              <button
-                onClick={() => navigate('/signin')}
-                className={styles.buttonSecondary}
-              >
+              <button onClick={() => navigate('/signin')} className={styles.buttonSecondary}>
                 Sign In
               </button>
             </div>
@@ -72,7 +96,11 @@ export default function HomePage() {
 
             <div className="flex items-center justify-center gap-2 text-stone-500">
               <MapPin className="w-4 h-4" />
-              <span>Delivering to Bakersfield and surrounding areas</span>
+              <span>
+                {userLocation
+                  ? 'Showing farms near you'
+                  : 'Delivering to Bakersfield and surrounding areas'}
+              </span>
             </div>
           </div>
         </div>
@@ -83,71 +111,109 @@ export default function HomePage() {
         <h2 className="text-2xl font-bold text-stone-800 mb-8" style={{ fontFamily: 'Georgia, serif' }}>
           Browse by category
         </h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          {CATEGORIES.map(cat => {
-            const Icon = CATEGORY_ICONS[cat.id] ?? Leaf
-            return (
-              <button
-                key={cat.id}
-                onClick={() => navigate(`/category/${cat.id}`)}
-                className="group relative bg-white/80 backdrop-blur-sm rounded-2xl p-6 border-2 border-stone-100 hover:border-green-300 transition-all hover:shadow-lg hover:-translate-y-1"
-              >
-                <div
-                  className="w-14 h-14 rounded-xl flex items-center justify-center mb-3 mx-auto transition-transform group-hover:scale-110"
-                  style={{ backgroundColor: `${cat.color}20` }}
+
+        {catsLoading ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="bg-white/80 rounded-2xl p-6 animate-pulse">
+                <div className="w-14 h-14 bg-stone-200 rounded-xl mb-3 mx-auto" />
+                <div className="h-3 bg-stone-100 rounded w-2/3 mx-auto" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {categories.map(cat => {
+              const Icon = ICON_MAP[cat.icon_name] ?? Leaf
+              return (
+                <button
+                  key={cat.id}
+                  onClick={() => navigate(`/category/${cat.slug}`)}
+                  className="group relative bg-white/80 backdrop-blur-sm rounded-2xl p-6 border-2 border-stone-100 hover:border-green-300 transition-all hover:shadow-lg hover:-translate-y-1"
                 >
-                  <Icon className="w-7 h-7" style={{ color: cat.color }} />
-                </div>
-                <span className="font-semibold text-stone-700">{cat.name}</span>
-              </button>
-            )
-          })}
-        </div>
+                  <div
+                    className="w-14 h-14 rounded-xl flex items-center justify-center mb-3 mx-auto transition-transform group-hover:scale-110"
+                    style={{ backgroundColor: `${cat.color_hex}20` }}
+                  >
+                    <Icon className="w-7 h-7" style={{ color: cat.color_hex }} />
+                  </div>
+                  <span className="font-semibold text-stone-700">{cat.name}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
 
-      {/* Featured farms */}
+      {/* Farms */}
       <div className="max-w-6xl mx-auto px-6 py-12">
         <div className="flex items-center justify-between mb-8">
           <h2 className="text-2xl font-bold text-stone-800" style={{ fontFamily: 'Georgia, serif' }}>
-            Featured farms
+            {userLocation ? 'Farms near you' : 'Local farms'}
           </h2>
-          <button className="text-green-700 font-semibold hover:text-green-800 flex items-center gap-1">
-            View all <ArrowRight className="w-4 h-4" />
-          </button>
+          {!farmsLoading && (
+            <span className="text-stone-400 text-sm">{filtered.length} farm{filtered.length !== 1 ? 's' : ''}</span>
+          )}
         </div>
 
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {featuredFarms.map(farm => (
-            <button
-              key={farm.id}
-              onClick={() => navigate(`/farms/${farm.id}`)}
-              className="group text-left bg-white/80 backdrop-blur-sm rounded-2xl overflow-hidden border border-stone-200/50 hover:shadow-xl transition-all hover:-translate-y-1"
-            >
-              <div className="relative h-48 overflow-hidden">
-                <img
-                  src={farm.image}
-                  alt={farm.name}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
-                <div className="absolute bottom-4 left-4 right-4">
-                  <div className="flex items-center gap-1 text-white/90 text-sm">
-                    <MapPin className="w-3.5 h-3.5" />
-                    {farm.location}
+        {farmsLoading ? (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {Array.from({ length: 3 }).map((_, i) => <FarmCardSkeleton key={i} />)}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-16 text-stone-400">
+            <Leaf className="w-12 h-12 mx-auto mb-3 opacity-30" />
+            <p className="text-lg">No farms found{searchQuery ? ` for "${searchQuery}"` : ''}.</p>
+          </div>
+        ) : (
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filtered.map(farm => {
+              const addr = farm.farm_addresses?.[0]
+              return (
+                <button
+                  key={farm.id}
+                  onClick={() => navigate(`/farms/${farm.slug}`)}
+                  className="group text-left bg-white/80 backdrop-blur-sm rounded-2xl overflow-hidden border border-stone-200/50 hover:shadow-xl transition-all hover:-translate-y-1"
+                >
+                  <div className="relative h-48 overflow-hidden">
+                    {farm.banner_url ? (
+                      <img
+                        src={farm.banner_url}
+                        alt={farm.farm_name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-gradient-to-br from-green-100 to-amber-100" />
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
+                    <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between">
+                      <div className="flex items-center gap-1 text-white/90 text-sm">
+                        <MapPin className="w-3.5 h-3.5" />
+                        {addr?.city}{addr?.state ? `, ${addr.state}` : ''}
+                      </div>
+                      {farm.distance_miles != null && (
+                        <span className="bg-black/40 text-white text-xs px-2 py-1 rounded-full">
+                          {formatDistance(farm.distance_miles)}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </div>
-              <div className="p-5">
-                <h3 className="text-lg font-bold text-stone-800 mb-1">{farm.name}</h3>
-                <p className="text-stone-500 text-sm mb-3">{farm.tagline}</p>
-                <div className="flex items-center gap-2">
-                  <span className="text-amber-500 font-semibold">★ {farm.rating}</span>
-                  <span className="text-stone-400 text-sm">({farm.reviews} reviews)</span>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
+                  <div className="p-5">
+                    <div className="flex items-center gap-2 mb-1">
+                      <h3 className="text-lg font-bold text-stone-800">{farm.farm_name}</h3>
+                      {farm.is_verified && (
+                        <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full font-medium">
+                          Verified
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-stone-500 text-sm">{farm.tagline}</p>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {/* How it works */}
@@ -158,9 +224,9 @@ export default function HomePage() {
           </h2>
           <div className="grid md:grid-cols-3 gap-8">
             {[
-              { icon: Search,      title: 'Browse local farms',   desc: "Explore farms in your area and see what's fresh this week" },
-              { icon: ShoppingBag, title: 'Subscribe or order',   desc: 'Get weekly deliveries or order when you need it' },
-              { icon: Truck,       title: 'We deliver',           desc: 'Fresh food arrives at your door, or pick up at the farm' },
+              { icon: Search,      title: 'Browse local farms',  desc: "Explore farms in your area and see what's fresh this week" },
+              { icon: ShoppingBag, title: 'Subscribe or order',  desc: 'Get weekly deliveries or order when you need it' },
+              { icon: Truck,       title: 'We deliver',          desc: 'Fresh food arrives at your door, or pick up at the farm' },
             ].map((step, i) => (
               <div key={i} className="text-center">
                 <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
