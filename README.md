@@ -80,21 +80,6 @@ Key variables:
 | `STRIPE_SECRET_KEY` | Stripe secret key (server-side only) |
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret |
 | `STRIPE_PLATFORM_FEE_PERCENT` | Global transaction fee (default: 5%) |
-
----
-
-## Farmer Pricing
-
-Farmers can join the platform through three options, all managed via Stripe Connect:
-
-| Plan | Price | Type | Features |
-|---|---|---|---|
-| **One-Time Listing** | $25 | One-time | Farm page, product listings, shareable link |
-| **Basic** | $39/mo | Subscription | Farm page, product listings, shareable link |
-| **Pro** | $69/mo | Subscription | Everything in Basic + customer subscriptions + delivery tools |
-
-Platform transaction fees are set globally by the super admin and applied to all customer purchases.
-
 ---
 
 ## Platform Features
@@ -137,22 +122,6 @@ The local food economy in the United States exceeds **$20 billion annually**, sp
 - Growth of farm-to-table restaurants
 - Demand for regenerative agriculture
 
----
-
-## Launch Strategy
-
-**Phase 1 — Initial launch**
-- Egg subscriptions
-- Seasonal vegetables
-- Microgreens
-
-**Phase 2 — Expansion**
-- Aquaponics products (shrimp, fish)
-- Additional farm onboarding
-- Regional food producers
-
----
-
 ## Long-Term Vision
 
 Build a regional agricultural network integrating small farms, backyard producers, aquaponics systems, community-supported agriculture, and local food delivery — creating a more resilient and decentralized food system powered by digital infrastructure.
@@ -161,4 +130,4 @@ Build a regional agricultural network integrating small farms, backyard producer
 
 ## License
 
-Private. All rights reserved.
+Private. Valley Farm Network. All rights reserved.

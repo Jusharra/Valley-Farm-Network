@@ -1,46 +1,30 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { Leaf } from 'lucide-react'
-import { useAuth } from '../../context/AuthContext'
+import { supabase } from '../../lib/supabase'
 import { styles } from '../../lib/styles'
 
-const ROLE_HOME = { admin: '/admin', farmer: '/dashboard', driver: '/driver', customer: '/' }
-
-export default function SignInPage() {
+export default function ResetPasswordPage() {
   const navigate = useNavigate()
-  const { signIn, profile, session } = useAuth()
-
-  // Redirect if already signed in
-  useEffect(() => {
-    if (session && profile) {
-      console.log('User already signed in, redirecting...')
-      const role = profile.role ?? 'customer'
-      navigate(ROLE_HOME[role] ?? '/')
-    }
-  }, [session, profile, navigate])
-
-  const [email, setEmail]       = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError]       = useState(null)
-  const [loading, setLoading]   = useState(false)
-  const [signedIn, setSignedIn] = useState(false)
+  const [email, setEmail] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
 
   async function handleSubmit(e) {
     e.preventDefault()
-    setError(null)
     setLoading(true)
+    setError('')
+    setMessage('')
 
-    const { data, error } = await signIn(email, password)
+    const { data, error } = await supabase.auth.resetPasswordForEmail(email)
     setLoading(false)
 
     if (error) {
       setError(error.message)
-      return
+    } else {
+      setMessage('Check your email for a password reset link.')
     }
-
-    // Mark as signed in - useEffect will handle navigation when profile loads
-    setSignedIn(true)
-    console.log('Sign in successful, waiting for profile to load...')
   }
 
   return (
@@ -57,7 +41,13 @@ export default function SignInPage() {
         </div>
 
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-stone-200/50 p-8">
-          <h1 className="text-2xl font-bold text-stone-800 mb-6">Sign in</h1>
+          <h1 className="text-2xl font-bold text-stone-800 mb-6">Reset Password</h1>
+
+          {message && (
+            <div className="bg-green-50 border border-green-200 text-green-700 text-sm px-4 py-3 rounded-xl mb-6">
+              {message}
+            </div>
+          )}
 
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-xl mb-6">
@@ -77,37 +67,20 @@ export default function SignInPage() {
                 placeholder="you@example.com"
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Password</label>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                className={styles.input}
-                placeholder="••••••••"
-              />
-            </div>
 
             <button
               type="submit"
               disabled={loading}
-              className={`${styles.buttonPrimary} w-full justify-center mt-2 disabled:opacity-60 disabled:cursor-not-allowed`}
+              className={`${styles.buttonPrimary} w-full justify-center disabled:opacity-60 disabled:cursor-not-allowed`}
             >
-              {loading ? 'Signing in…' : 'Sign in'}
+              {loading ? 'Sending...' : 'Send Reset Link'}
             </button>
           </form>
 
           <p className="text-center text-stone-500 text-sm mt-6">
-            Don't have an account?{' '}
-            <Link to="/signup" className="text-green-700 font-medium hover:underline">
-              Sign up
-            </Link>
-          </p>
-
-          <p className="text-center text-stone-500 text-sm">
-            <Link to="/reset-password" className="text-green-700 font-medium hover:underline">
-              Forgot password?
+            Remember your password?{' '}
+            <Link to="/signin" className="text-green-700 font-medium hover:underline">
+              Sign in
             </Link>
           </p>
         </div>

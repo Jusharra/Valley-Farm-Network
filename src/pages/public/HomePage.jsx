@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, MapPin, Leaf, Truck, ShoppingBag } from 'lucide-react'
+import { Search, MapPin, Leaf, Truck, ShoppingBag, UserCircle } from 'lucide-react'
 import { useFarms } from '../../hooks/useFarms'
 import { useCategories } from '../../hooks/useCategories'
+import { useAuth } from '../../context/AuthContext'
 import { ICON_MAP } from '../../lib/icons'
 import { styles } from '../../lib/styles'
 
@@ -28,7 +29,9 @@ export default function HomePage() {
   const navigate = useNavigate()
   const [searchQuery, setSearchQuery] = useState('')
 
+  const { profile } = useAuth()
   const { farms, loading: farmsLoading, userLocation } = useFarms()
+  const { farms: featuredFarms, loading: featuredLoading } = useFarms({ featured: true })
   const { categories, loading: catsLoading } = useCategories()
 
   const filtered = searchQuery.trim()
@@ -59,15 +62,29 @@ export default function HomePage() {
               </span>
             </div>
             <div className="flex items-center gap-4">
-              <button
-                onClick={() => navigate('/signup?role=farmer')}
-                className="text-stone-600 hover:text-green-700 font-medium transition-colors"
-              >
-                Sell on Kern Harvest
-              </button>
-              <button onClick={() => navigate('/signin')} className={styles.buttonSecondary}>
-                Sign In
-              </button>
+              {profile ? (
+                <>
+                  <button
+                    onClick={() => navigate('/account')}
+                    className="flex items-center gap-2 text-stone-600 hover:text-green-700 font-medium transition-colors"
+                  >
+                    <UserCircle className="w-5 h-5" />
+                    My Account
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => navigate('/signup?role=farmer')}
+                    className="text-stone-600 hover:text-green-700 font-medium transition-colors"
+                  >
+                    Sell on Kern Harvest
+                  </button>
+                  <button onClick={() => navigate('/signin')} className={styles.buttonSecondary}>
+                    Sign In
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
@@ -145,7 +162,71 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* Farms */}
+      {/* Featured Farms */}
+      {(featuredLoading || featuredFarms.length > 0) && (
+        <div className="max-w-6xl mx-auto px-6 py-12">
+          <div className="flex items-center gap-3 mb-8">
+            <h2 className="text-2xl font-bold text-stone-800" style={{ fontFamily: 'Georgia, serif' }}>
+              Featured farms
+            </h2>
+            <span className="bg-amber-100 text-amber-700 text-xs font-semibold px-2.5 py-1 rounded-full">
+              Editor's picks
+            </span>
+          </div>
+
+          {featuredLoading ? (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {Array.from({ length: 3 }).map((_, i) => <FarmCardSkeleton key={i} />)}
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {featuredFarms.map(farm => {
+                const addr = farm.farm_addresses?.[0]
+                return (
+                  <button
+                    key={farm.id}
+                    onClick={() => navigate(`/farms/${farm.slug}`)}
+                    className="group text-left bg-white/80 backdrop-blur-sm rounded-2xl overflow-hidden border-2 border-amber-200/60 hover:border-amber-300 hover:shadow-xl transition-all hover:-translate-y-1"
+                  >
+                    <div className="relative h-48 overflow-hidden">
+                      {farm.banner_url ? (
+                        <img
+                          src={farm.banner_url}
+                          alt={farm.farm_name}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-gradient-to-br from-amber-100 to-green-100" />
+                      )}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
+                      <div className="absolute top-3 right-3 bg-amber-400 text-amber-900 text-xs font-bold px-2.5 py-1 rounded-full">
+                        Featured
+                      </div>
+                      <div className="absolute bottom-4 left-4 flex items-center gap-1 text-white/90 text-sm">
+                        <MapPin className="w-3.5 h-3.5" />
+                        {addr?.city}{addr?.state ? `, ${addr.state}` : ''}
+                      </div>
+                    </div>
+                    <div className="p-5">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-lg font-bold text-stone-800">{farm.farm_name}</h3>
+                        {farm.is_verified && (
+                          <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full font-medium">
+                            Verified
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-stone-500 text-sm">{farm.tagline}</p>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Local Farms */}
       <div className="max-w-6xl mx-auto px-6 py-12">
         <div className="flex items-center justify-between mb-8">
           <h2 className="text-2xl font-bold text-stone-800" style={{ fontFamily: 'Georgia, serif' }}>

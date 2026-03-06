@@ -50,11 +50,12 @@ create trigger set_profiles_updated_at
 create or replace function public.handle_new_user()
 returns trigger as $$
 begin
-  insert into public.profiles (id, email, full_name)
+  insert into public.profiles (id, email, full_name, role)
   values (
     new.id,
     new.email,
-    coalesce(new.raw_user_meta_data->>'full_name', '')
+    coalesce(new.raw_user_meta_data->>'full_name', ''),
+    coalesce(new.raw_user_meta_data->>'role', 'customer')
   );
   return new;
 end;
@@ -107,6 +108,7 @@ create table public.farms (
   banner_url       text,
   is_active              boolean     not null default true,
   is_verified            boolean     not null default false,
+  is_featured            boolean     not null default false,
   offers_delivery        boolean     not null default false,
   offers_pickup          boolean     not null default true,
   delivery_radius_miles  integer     check (delivery_radius_miles in (5, 10, 25, 50)),
@@ -117,6 +119,21 @@ create table public.farms (
 create trigger set_farms_updated_at
   before update on public.farms
   for each row execute function public.set_updated_at();
+
+-- Prevent non-admins from toggling is_featured
+create or replace function public.guard_is_featured()
+returns trigger as $$
+begin
+  if new.is_featured <> old.is_featured and public.my_role() <> 'admin' then
+    raise exception 'Only admins can change is_featured';
+  end if;
+  return new;
+end;
+$$ language plpgsql security definer;
+
+create trigger enforce_is_featured_admin_only
+  before update on public.farms
+  for each row execute function public.guard_is_featured();
 
 -- --
 
@@ -618,7 +635,7 @@ create policy "Orders visible to customer, farm owner, and admin"
 
 create policy "Customers can insert orders"
   on public.orders for insert
-  with check (auth.uid() = customer_id);
+  with check (auth.uid() = customer_id or customer_id is null);
 
 create policy "Farm owners and admins can update orders"
   on public.orders for update
@@ -644,7 +661,7 @@ create policy "Order items insertable with own order"
   with check (
     exists (
       select 1 from public.orders o
-      where o.id = order_id and o.customer_id = auth.uid()
+      where o.id = order_id and (o.customer_id = auth.uid() or o.customer_id is null)
     )
   );
 
@@ -704,6 +721,15 @@ create policy "Farm owners and admins can manage deliveries"
     or exists (
       select 1 from public.orders o
       where o.id = order_id and public.i_own_farm(o.farm_id)
+    )
+  );
+
+create policy "Drivers can update own assigned deliveries"
+  on public.deliveries for update
+  using (
+    exists (
+      select 1 from public.drivers d
+      where d.id = driver_id and d.profile_id = auth.uid()
     )
   );
 

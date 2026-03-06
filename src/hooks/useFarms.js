@@ -22,7 +22,8 @@ function withDistances(farms, lat, lng) {
 
 // Fetches active farms.
 // Pass { categorySlug } to filter by category.
-export function useFarms({ categorySlug } = {}) {
+// Pass { featured: true } to fetch only featured farms (ignores location sorting).
+export function useFarms({ categorySlug, featured } = {}) {
   const [rawFarms, setRawFarms]     = useState([])
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(null)
@@ -61,7 +62,7 @@ export function useFarms({ categorySlug } = {}) {
         let query = supabase
           .from('farms')
           .select(`
-            id, farm_name, slug, tagline, banner_url, logo_url, is_verified,
+            id, farm_name, slug, tagline, banner_url, logo_url, is_verified, is_featured,
             delivery_radius_miles,
             farm_addresses (city, state, latitude, longitude)
           `)
@@ -69,9 +70,14 @@ export function useFarms({ categorySlug } = {}) {
           .order('created_at', { ascending: false })
 
         if (farmIds) query = query.in('id', farmIds)
+        if (featured) query = query.eq('is_featured', true)
 
         const { data, error } = await query
-        if (error) throw error
+        if (error) {
+          console.error('Farms fetch error:', error)
+          throw error
+        }
+        console.log('Farms loaded:', data?.length || 0, 'farms')
         if (!cancelled) setRawFarms(data ?? [])
       } catch (err) {
         if (!cancelled) setError(err.message)
@@ -82,7 +88,7 @@ export function useFarms({ categorySlug } = {}) {
 
     fetch()
     return () => { cancelled = true }
-  }, [categorySlug])
+  }, [categorySlug, featured])
 
   // Request geolocation once
   useEffect(() => {

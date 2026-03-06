@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   LayoutDashboard, Store, Package, ShoppingBag, CreditCard,
-  LogOut, Plus, Edit2, Trash2, X, Check, Leaf, AlertCircle,
+  LogOut, Plus, Edit2, Trash2, X, Check, Leaf, AlertCircle, Camera,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useFarmerFarm } from '../../hooks/useFarmerFarm'
@@ -45,7 +45,7 @@ const PLANS = [
 
 const BLANK_PRODUCT = {
   name: '', description: '', price: '', unit_name: 'each',
-  product_type: 'one_time', category_id: '', stock_qty: '', is_active: true,
+  product_type: 'one_time', category_id: '', stock_qty: '', is_active: true, image_url: '',
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -80,6 +80,8 @@ export default function FarmerDashboard() {
   const [saving, setSaving]         = useState(false)
   const [toast, setToast]           = useState(null)
   const [connectLoading, setConnectLoading] = useState(false)
+  const [imgUploading, setImgUploading] = useState(false)
+  const imgInputRef = useRef(null)
 
   // Farm setup state (first-time farmers)
   const [setupForm, setSetupForm]       = useState({
@@ -163,8 +165,24 @@ export default function FarmerDashboard() {
       category_id:  p.category_id ?? '',
       stock_qty:    p.stock_qty ?? '',
       is_active:    p.is_active,
+      image_url:    p.image_url ?? '',
     })
     setDrawerOpen(true)
+  }
+
+  async function handleProductImageUpload(e) {
+    const file = e.target.files?.[0]
+    if (!file || !farm) return
+    setImgUploading(true)
+    const ext  = file.name.split('.').pop()
+    const path = `${farm.id}/${Date.now()}.${ext}`
+    const { error: upErr } = await supabase.storage
+      .from('product-images')
+      .upload(path, file, { upsert: true })
+    if (upErr) { notify('error', upErr.message); setImgUploading(false); return }
+    const { data: { publicUrl } } = supabase.storage.from('product-images').getPublicUrl(path)
+    setProductForm(f => ({ ...f, image_url: publicUrl }))
+    setImgUploading(false)
   }
 
   async function handleSaveProduct(e) {
@@ -491,6 +509,40 @@ export default function FarmerDashboard() {
                   value={productForm.description}
                   onChange={e => setProductForm(f => ({ ...f, description: e.target.value }))}
                 />
+              </div>
+
+              {/* Product image */}
+              <div>
+                <label className="block text-sm font-semibold text-stone-700 mb-1.5">Product photo</label>
+                <input ref={imgInputRef} type="file" accept="image/*" className="hidden" onChange={handleProductImageUpload} />
+                {productForm.image_url ? (
+                  <div className="relative">
+                    <img
+                      src={productForm.image_url}
+                      alt="Product preview"
+                      className="w-full h-40 object-cover rounded-xl border border-stone-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => imgInputRef.current?.click()}
+                      disabled={imgUploading}
+                      className="absolute bottom-2 right-2 bg-black/50 hover:bg-black/70 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-60"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      {imgUploading ? 'Uploading…' : 'Change'}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => imgInputRef.current?.click()}
+                    disabled={imgUploading}
+                    className="w-full h-32 border-2 border-dashed border-stone-300 hover:border-green-400 rounded-xl flex flex-col items-center justify-center gap-2 text-stone-400 hover:text-green-600 transition-colors disabled:opacity-60"
+                  >
+                    <Camera className="w-6 h-6" />
+                    <span className="text-sm font-medium">{imgUploading ? 'Uploading…' : 'Upload photo'}</span>
+                  </button>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">

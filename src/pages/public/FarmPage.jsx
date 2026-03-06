@@ -179,7 +179,7 @@ export default function FarmPage() {
                       </div>
                       <div className="flex flex-col gap-2 ml-6">
                         <button
-                          onClick={() => addToCart(farm.id, product)}
+                          onClick={() => addToCart(farm.id, product, farm.farm_name)}
                           className={styles.buttonPrimary}
                         >
                           Add to cart
