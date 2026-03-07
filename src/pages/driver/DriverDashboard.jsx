@@ -2,11 +2,12 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Leaf, Truck, MapPin, Package, CheckCircle2, XCircle, Camera,
-  Clock, AlertCircle, Plus, Trash2, ChevronDown, ChevronUp, Navigation,
+  Clock, AlertCircle, Plus, Trash2, ChevronDown, ChevronUp, Navigation, Settings,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { styles } from '../../lib/styles'
+import AccountSettings from '../../components/AccountSettings'
 
 // ── Status config ─────────────────────────────────────────────────────────────
 const STATUS_STYLE = {
@@ -430,6 +431,7 @@ function ActiveDashboard({ driver, profile, signOut }) {
           {[
             { id: 'deliveries', label: 'My Deliveries', icon: Truck,      badge: activeDeliveries.length || null },
             { id: 'areas',      label: 'Service Areas',  icon: Navigation, badge: null },
+            { id: 'account',    label: 'Account',        icon: Settings,   badge: null },
           ].map(item => (
             <button
               key={item.id}
@@ -465,12 +467,14 @@ function ActiveDashboard({ driver, profile, signOut }) {
         <div className="max-w-3xl">
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-stone-800">
-              {activeTab === 'deliveries' ? 'My Deliveries' : 'Service Areas'}
+              {activeTab === 'deliveries' ? 'My Deliveries' : activeTab === 'areas' ? 'Service Areas' : 'Account Settings'}
             </h1>
             <p className="text-stone-500">
               {activeTab === 'deliveries'
                 ? `${activeDeliveries.length} active · ${completedDeliveries.length} completed`
-                : 'Manage the cities and ZIP codes you deliver to'}
+                : activeTab === 'areas'
+                ? 'Manage the cities and ZIP codes you deliver to'
+                : 'Update your profile, email and password'}
             </p>
           </div>
 
@@ -605,6 +609,9 @@ function ActiveDashboard({ driver, profile, signOut }) {
               </div>
             </div>
           )}
+
+          {/* ── ACCOUNT ── */}
+          {activeTab === 'account' && <AccountSettings />}
         </div>
       </div>
     </div>

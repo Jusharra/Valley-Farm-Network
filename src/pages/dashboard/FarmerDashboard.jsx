@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   LayoutDashboard, Store, Package, ShoppingBag, CreditCard,
-  LogOut, Plus, Edit2, Trash2, X, Check, Leaf, AlertCircle, Camera,
+  LogOut, Plus, Edit2, Trash2, X, Check, Leaf, AlertCircle, Camera, Link, Share2, Mail, Users, Settings,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
+import AccountSettings from '../../components/AccountSettings'
 import { useFarmerFarm } from '../../hooks/useFarmerFarm'
 import { useOrders } from '../../hooks/useOrders'
 import { useCategories } from '../../hooks/useCategories'
@@ -37,10 +39,10 @@ const NEXT_STATUS = {
 const UNIT_PRESETS = ['each', 'dozen', 'lb', 'oz', 'bunch', 'bag', 'box', 'jar', 'pint', 'quart', 'gallon']
 
 const PLANS = [
-  { name: 'One-Time Listing', price: '$25',  period: 'once', features: ['Up to 5 products', 'Basic farm profile', 'No monthly fee'] },
-  { name: 'Seed',             price: '$39',  period: '/mo',  features: ['Up to 20 products', 'Delivery tools', 'Customer messaging'] },
-  { name: 'Growth',           price: '$79',  period: '/mo',  features: ['Unlimited products', 'Subscription sales', 'Analytics', 'Priority support'] },
-  { name: 'Network Pro',      price: '$129', period: '/mo',  features: ['Everything in Growth', 'Multi-farm management', 'API access', 'Dedicated support'] },
+  { slug: 'listing', name: 'Garden Plot Listing', price: '$25',  period: 'once', features: ['Storefront page', 'Up to 10 products', 'Marketplace visibility', 'Shareable storefront link', 'Social share links', 'QR code for local promotion', 'Basic order analytics', 'Support'] },
+  { slug: 'seed',    name: 'Seed Listing',        price: '$39',  period: '/mo',  features: ['Everything in Garden Plot', 'Up to 20 products', 'Delivery management', 'One-time product sales', 'Ticket support'] },
+  { slug: 'growth',  name: 'Growth Subscription', price: '$79',  period: '/mo',  features: ['Everything in Seed', 'Recurring subscriptions for products', 'Up to 40 product listings', 'Delivery management', 'Customer list export', 'Ticket support'] },
+  { slug: 'pro',     name: 'Network Pro',         price: '$129', period: '/mo',  features: ['Everything in Growth', 'Multiple staff users', '60 product listings', 'Driver network access', 'Premium support', 'Featured placement in marketplace search'] },
 ]
 
 const BLANK_PRODUCT = {
@@ -70,18 +72,29 @@ function Toast({ msg }) {
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 
+const VALID_TABS = new Set(['overview', 'profile', 'products', 'orders', 'subscribers', 'subscription', 'account'])
+
 export default function FarmerDashboard() {
   const { profile, session, signOut } = useAuth()
-  const { farm, products, loading, createFarm, updateFarm, addProduct, updateProduct, deleteProduct } = useFarmerFarm()
-  const { orders, loading: ordersLoading, updateOrderStatus } = useOrders(farm?.id)
+  const { farm, products, loading, activeProductCount, productLimit, createFarm, updateFarm, addProduct, updateProduct, deleteProduct } = useFarmerFarm()
+  const { orders, subscriptions, loading: ordersLoading, updateOrderStatus } = useOrders(farm?.id)
   const { categories } = useCategories()
+  const [searchParams] = useSearchParams()
 
-  const [tab, setTab]               = useState('overview')
+  const [tab, setTab] = useState(() => {
+    const t = searchParams.get('tab')
+    return VALID_TABS.has(t) ? t : 'overview'
+  })
   const [saving, setSaving]         = useState(false)
   const [toast, setToast]           = useState(null)
   const [connectLoading, setConnectLoading] = useState(false)
+  const [portalLoading, setPortalLoading]   = useState(false)
   const [imgUploading, setImgUploading] = useState(false)
+  const [dbPlans, setDbPlans]             = useState([])
+  const [platformSub, setPlatformSub]     = useState(null)
+  const [planLoading, setPlanLoading]     = useState(false)
   const imgInputRef = useRef(null)
+  const [subscribers, setSubscribers]   = useState([])
 
   // Farm setup state (first-time farmers)
   const [setupForm, setSetupForm]       = useState({
@@ -98,6 +111,29 @@ export default function FarmerDashboard() {
   const [editingProduct, setEditingProduct] = useState(null)
   const [productForm, setProductForm]       = useState(BLANK_PRODUCT)
   const [confirmDelete, setConfirmDelete]   = useState(null)
+
+  useEffect(() => {
+    if (!farm?.id || tab !== 'subscribers') return
+    supabase
+      .from('customer_product_subscriptions')
+      .select('*, products(name, unit_name), profiles(full_name)')
+      .eq('farm_id', farm.id)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => setSubscribers(data ?? []))
+  }, [farm?.id, tab])
+
+  useEffect(() => {
+    if (!farm?.id || tab !== 'subscription') return
+    setPlanLoading(true)
+    Promise.all([
+      supabase.from('farm_plans').select('id, name, slug, stripe_price_id').eq('is_active', true).order('sort_order'),
+      supabase.from('farm_platform_subscriptions').select('*, farm_plans(name, slug)').eq('farm_id', farm.id).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    ]).then(([{ data: plans }, { data: sub }]) => {
+      setDbPlans(plans ?? [])
+      setPlatformSub(sub ?? null)
+      setPlanLoading(false)
+    })
+  }, [farm?.id, tab])
 
   useEffect(() => {
     if (farm && !farmForm) {
@@ -149,6 +185,14 @@ export default function FarmerDashboard() {
 
   // ── Product drawer ──
   function openAddDrawer() {
+    if (productLimit === 0) {
+      notify('error', 'You need an active subscription to add products.')
+      return
+    }
+    if (productLimit !== null && activeProductCount >= productLimit) {
+      notify('error', `You've reached your ${productLimit}-product limit. Upgrade your plan to add more.`)
+      return
+    }
     setEditingProduct(null)
     setProductForm(BLANK_PRODUCT)
     setDrawerOpen(true)
@@ -188,11 +232,13 @@ export default function FarmerDashboard() {
   async function handleSaveProduct(e) {
     e.preventDefault()
     setSaving(true)
+    const base = productForm.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
     const payload = {
       ...productForm,
       price:       parseFloat(productForm.price),
       stock_qty:   productForm.stock_qty ? parseInt(productForm.stock_qty) : null,
       category_id: productForm.category_id || null,
+      ...(!editingProduct && { slug: `${base}-${Date.now().toString(36)}` }),
     }
     try {
       if (editingProduct) {
@@ -204,7 +250,12 @@ export default function FarmerDashboard() {
       }
       setDrawerOpen(false)
     } catch (err) {
-      notify('error', err.message)
+      const msg = err.message?.includes('no_subscription')
+        ? 'You need an active subscription to add products.'
+        : err.message?.includes('product_limit_reached')
+          ? `Product limit reached. Upgrade your plan to add more.`
+          : err.message
+      notify('error', msg)
     } finally {
       setSaving(false)
     }
@@ -238,6 +289,39 @@ export default function FarmerDashboard() {
     } catch (err) {
       notify('error', err.message ?? 'Could not start Stripe onboarding. Try again.')
       setConnectLoading(false)
+    }
+  }
+
+  // ── Platform plan checkout ──
+  async function handleSwitchPlan(planId) {
+    setPlanLoading(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('create-platform-checkout', {
+        body: { planId },
+      })
+      if (error) {
+        const body = await error.context?.json?.().catch(() => null)
+        throw new Error(body?.error ?? body?.message ?? error.message)
+      }
+      window.location.href = data.url
+    } catch (err) {
+      notify('error', err.message ?? 'Could not start checkout. Try again.')
+      setPlanLoading(false)
+    }
+  }
+
+  // ── Stripe billing portal ──
+  async function handleManageSubscription() {
+    setPortalLoading(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('create-portal-link', {
+        body: { return_url: `${window.location.origin}/dashboard` },
+      })
+      if (error) throw error
+      window.location.href = data.url
+    } catch (err) {
+      notify('error', err.message ?? 'Could not open billing portal. Try again.')
+      setPortalLoading(false)
     }
   }
 
@@ -367,7 +451,9 @@ export default function FarmerDashboard() {
     { id: 'farm',         label: 'Farm Profile', Icon: Store },
     { id: 'products',     label: 'Products',     Icon: Package,     badge: activeProducts.length },
     { id: 'orders',       label: 'Orders',       Icon: ShoppingBag, badge: pendingCount || null },
+    { id: 'subscribers',  label: 'Subscribers',  Icon: Users },
     { id: 'subscription', label: 'Billing',      Icon: CreditCard },
+    { id: 'account',      label: 'Account',      Icon: Settings },
   ]
 
   return (
@@ -444,11 +530,14 @@ export default function FarmerDashboard() {
             setForm={setFarmForm}
             onSave={handleSaveFarm}
             saving={saving}
+            farm={farm}
           />
         )}
         {tab === 'products' && (
           <ProductsSection
             products={products}
+            productLimit={productLimit}
+            activeProductCount={activeProductCount}
             onAdd={openAddDrawer}
             onEdit={openEditDrawer}
             confirmDelete={confirmDelete}
@@ -461,17 +550,28 @@ export default function FarmerDashboard() {
         {tab === 'orders' && (
           <OrdersSection
             orders={orders}
+            subscriptions={subscriptions}
             loading={ordersLoading}
             onUpdateStatus={updateOrderStatus}
           />
+        )}
+        {tab === 'subscribers' && (
+          <SubscribersSection subscribers={subscribers} />
         )}
         {tab === 'subscription' && (
           <SubscriptionSection
             farm={farm}
             onConnect={handleConnectStripe}
             connectLoading={connectLoading}
+            onManage={handleManageSubscription}
+            portalLoading={portalLoading}
+            dbPlans={dbPlans}
+            platformSub={platformSub}
+            planLoading={planLoading}
+            onSwitchPlan={handleSwitchPlan}
           />
         )}
+        {tab === 'account' && <AccountSettings />}
       </main>
 
       {/* ── Product drawer ── */}
@@ -543,6 +643,7 @@ export default function FarmerDashboard() {
                     <span className="text-sm font-medium">{imgUploading ? 'Uploading…' : 'Upload photo'}</span>
                   </button>
                 )}
+                <p className="text-xs text-stone-400 mt-1.5">Best size: 800 × 600 px (landscape). JPG or PNG.</p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -611,6 +712,17 @@ export default function FarmerDashboard() {
                     </label>
                   ))}
                 </div>
+                {(productForm.product_type === 'subscription' || productForm.product_type === 'both') && !farm?.charges_enabled && (
+                  <div className="mt-2 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-xs text-amber-800">
+                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                    <span>
+                      Subscriptions require your Stripe account to be connected and active.{' '}
+                      <button type="button" className="underline font-medium" onClick={() => setTab('subscription')}>
+                        Set up payments →
+                      </button>
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -737,7 +849,34 @@ function OverviewSection({ profile, products, orders, ordersLoading, onGoToProdu
 
 // ─── Farm Profile Section ─────────────────────────────────────────────────────
 
-function FarmProfileSection({ form, setForm, onSave, saving }) {
+function FarmProfileSection({ form, setForm, onSave, saving, farm }) {
+  const bannerInputRef = useRef(null)
+  const [bannerUploading, setBannerUploading] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const farmUrl = `${window.location.origin}/farms/${farm.slug}`
+
+  async function handleCopy() {
+    await navigator.clipboard.writeText(farmUrl)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  async function handleBannerUpload(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBannerUploading(true)
+    const ext  = file.name.split('.').pop()
+    const path = `${farm.id}/banner-${Date.now()}.${ext}`
+    const { error: upErr } = await supabase.storage
+      .from('farm-images')
+      .upload(path, file, { upsert: true })
+    if (upErr) { setBannerUploading(false); return }
+    const { data: { publicUrl } } = supabase.storage.from('farm-images').getPublicUrl(path)
+    setForm(f => ({ ...f, banner_url: publicUrl }))
+    setBannerUploading(false)
+  }
+
   return (
     <div>
       <div className="mb-6">
@@ -784,17 +923,57 @@ function FarmProfileSection({ form, setForm, onSave, saving }) {
 
           <div>
             <label className="block text-sm font-semibold text-stone-700 mb-1.5">
-              Banner image URL <span className="font-normal text-stone-400">(optional)</span>
+              Banner image <span className="font-normal text-stone-400">(optional)</span>
             </label>
-            <input
-              className={styles.input}
-              placeholder="https://..."
-              value={form.banner_url}
-              onChange={e => setForm(f => ({ ...f, banner_url: e.target.value }))}
-            />
-            {form.banner_url && (
-              <div className="mt-3 h-32 rounded-xl overflow-hidden border border-stone-200">
-                <img src={form.banner_url} alt="Banner preview" className="w-full h-full object-cover" />
+            <input ref={bannerInputRef} type="file" accept="image/*" className="hidden" onChange={handleBannerUpload} />
+            {form.banner_url ? (
+              <div className="relative">
+                <img src={form.banner_url} alt="Banner preview" className="w-full h-36 object-cover rounded-xl border border-stone-200" />
+                <span className="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-1 rounded-lg">1600 × 600 px recommended</span>
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, banner_url: '' }))}
+                  className="absolute top-2 right-2 bg-white/80 hover:bg-white rounded-full p-1 shadow"
+                >
+                  <X size={14} className="text-stone-600" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => bannerInputRef.current?.click()}
+                  className="absolute bottom-2 right-2 bg-white/80 hover:bg-white rounded-lg px-3 py-1.5 text-xs font-medium text-stone-600 shadow flex items-center gap-1.5"
+                >
+                  <Camera size={12} /> Change photo
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  disabled={bannerUploading}
+                  onClick={() => bannerInputRef.current?.click()}
+                  className="w-full h-28 border-2 border-dashed border-stone-300 rounded-xl flex flex-col items-center justify-center gap-1.5 text-stone-400 hover:border-green-400 hover:text-green-600 transition-colors disabled:opacity-50"
+                >
+                  {bannerUploading ? (
+                    <span className="text-sm">Uploading...</span>
+                  ) : (
+                    <>
+                      <Camera size={20} />
+                      <span className="text-sm font-medium">Upload banner photo</span>
+                      <span className="text-xs">Best size: 1600 × 600 px (wide landscape). JPG or PNG.</span>
+                    </>
+                  )}
+                </button>
+                <div className="flex items-center gap-2 text-stone-400 text-xs">
+                  <div className="flex-1 h-px bg-stone-200" />
+                  <span>or paste a URL</span>
+                  <div className="flex-1 h-px bg-stone-200" />
+                </div>
+                <input
+                  className={styles.input}
+                  placeholder="https://..."
+                  value={form.banner_url}
+                  onChange={e => setForm(f => ({ ...f, banner_url: e.target.value }))}
+                />
               </div>
             )}
           </div>
@@ -843,23 +1022,109 @@ function FarmProfileSection({ form, setForm, onSave, saving }) {
           {saving ? 'Saving...' : 'Save changes'}
         </button>
       </form>
+
+      {/* ── Share your farm ── */}
+      <div className="bg-white rounded-2xl border border-stone-200/50 p-6 max-w-2xl mt-5">
+        <h2 className="text-xs font-bold text-stone-400 uppercase tracking-wider border-b border-stone-100 pb-3 mb-5">
+          Share your farm
+        </h2>
+
+        <div className="mb-5">
+          <p className="text-sm font-semibold text-stone-700 mb-2">Your farm page URL</p>
+          <div className="flex gap-2">
+            <div className="flex-1 flex items-center gap-2 bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 min-w-0">
+              <Link size={14} className="text-stone-400 flex-shrink-0" />
+              <span className="text-sm text-stone-600 truncate">{farmUrl}</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all flex-shrink-0 ${
+                copied ? 'bg-green-600 text-white' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+              }`}
+            >
+              {copied ? <><Check size={14} /> Copied!</> : 'Copy link'}
+            </button>
+          </div>
+        </div>
+
+        <p className="text-sm font-semibold text-stone-700 mb-3">Share on</p>
+        <div className="flex flex-wrap gap-2">
+          <a
+            href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(farmUrl)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium bg-[#1877F2] text-white hover:bg-[#166FE5] transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+            </svg>
+            Facebook
+          </a>
+
+          <a
+            href={`mailto:?subject=Check out ${encodeURIComponent(farm.farm_name)} on Kern Harvest!&body=I found this farm and thought you'd love their products: ${farmUrl}`}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium bg-stone-700 text-white hover:bg-stone-800 transition-colors"
+          >
+            <Mail size={14} />
+            Email
+          </a>
+
+          {'share' in navigator ? (
+            <button
+              type="button"
+              onClick={() => navigator.share({ title: farm.farm_name, text: `Check out ${farm.farm_name} on Kern Harvest!`, url: farmUrl })}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600 transition-all"
+            >
+              <Share2 size={14} />
+              More apps
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600 transition-all"
+            >
+              <Share2 size={14} />
+              {copied ? 'Link copied!' : 'Instagram / TikTok'}
+            </button>
+          )}
+        </div>
+
+        {'share' in navigator ? null : (
+          <p className="text-xs text-stone-400 mt-3">
+            Paste the copied link in your Instagram bio or TikTok profile to drive traffic to your farm page.
+          </p>
+        )}
+      </div>
     </div>
   )
 }
 
 // ─── Products Section ─────────────────────────────────────────────────────────
 
-function ProductsSection({ products, onAdd, onEdit, confirmDelete, onDeleteClick, onConfirmDelete, onCancelDelete, saving }) {
-  const activeCount = products.filter(p => p.is_active).length
+function ProductsSection({ products, productLimit, activeProductCount, onAdd, onEdit, confirmDelete, onDeleteClick, onConfirmDelete, onCancelDelete, saving }) {
+  const atLimit    = productLimit !== null && productLimit !== undefined && activeProductCount >= productLimit
+  const nearLimit  = productLimit && !atLimit && activeProductCount / productLimit >= 0.8
+  const limitColor = atLimit ? 'text-red-600' : nearLimit ? 'text-amber-600' : 'text-stone-500'
+  const limitLabel = productLimit === 0
+    ? 'No active subscription'
+    : productLimit === null
+      ? `${activeProductCount} active · ${products.length} total`
+      : `${activeProductCount} / ${productLimit} products used`
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-stone-800">Products</h1>
-          <p className="text-stone-500 mt-1">{activeCount} active · {products.length} total</p>
+          <p className={`mt-1 text-sm font-medium ${limitColor}`}>{limitLabel}</p>
         </div>
-        <button onClick={onAdd} className={`${styles.buttonPrimary} flex items-center gap-2`}>
+        <button
+          onClick={onAdd}
+          disabled={atLimit || productLimit === 0}
+          className={`${styles.buttonPrimary} flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed`}
+        >
           <Plus className="w-4 h-4" />
           Add product
         </button>
@@ -970,7 +1235,16 @@ function ProductsSection({ products, onAdd, onEdit, confirmDelete, onDeleteClick
 
 // ─── Orders Section ───────────────────────────────────────────────────────────
 
-function OrdersSection({ orders, loading, onUpdateStatus }) {
+const SUB_STATUS_COLORS = {
+  active:     'bg-green-100 text-green-700',
+  trialing:   'bg-blue-100 text-blue-700',
+  past_due:   'bg-amber-100 text-amber-700',
+  cancelled:  'bg-red-100 text-red-700',
+  canceled:   'bg-red-100 text-red-700',
+  incomplete: 'bg-stone-100 text-stone-500',
+}
+
+function OrdersSection({ orders, subscriptions = [], loading, onUpdateStatus }) {
   const [filter, setFilter] = useState('all')
   const visible = filter === 'all' ? orders : orders.filter(o => o.status === filter)
   const STATUSES = ['all', 'pending', 'confirmed', 'out_for_delivery', 'delivered', 'cancelled']
@@ -979,7 +1253,7 @@ function OrdersSection({ orders, loading, onUpdateStatus }) {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-stone-800">Orders</h1>
-        <p className="text-stone-500 mt-1">{orders.length} total order{orders.length !== 1 ? 's' : ''}</p>
+        <p className="text-stone-500 mt-1">{orders.length} one-time · {subscriptions.length} subscription{subscriptions.length !== 1 ? 's' : ''}</p>
       </div>
 
       <div className="flex gap-2 mb-6 flex-wrap">
@@ -1054,14 +1328,145 @@ function OrdersSection({ orders, loading, onUpdateStatus }) {
           })}
         </div>
       )}
+
+      {/* ── Subscriptions ── */}
+      <div className="mt-10">
+        <h2 className="text-xl font-bold text-stone-800 mb-2">Subscriptions</h2>
+        <p className="text-stone-500 text-sm mb-5">
+          {subscriptions.filter(s => s.status === 'active').length} active subscription{subscriptions.filter(s => s.status === 'active').length !== 1 ? 's' : ''}
+        </p>
+        {subscriptions.length === 0 ? (
+          <div className="text-center py-12 bg-white rounded-2xl border border-stone-200/50">
+            <Users className="w-10 h-10 mx-auto mb-3 text-stone-200" />
+            <p className="text-stone-400">No subscription orders yet.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {subscriptions.map(s => (
+              <div key={s.id} className="bg-white rounded-2xl border border-stone-200/50 p-5">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="font-bold text-stone-800">{s.profiles?.full_name ?? 'Unknown'}</p>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${SUB_STATUS_COLORS[s.status] ?? 'bg-stone-100 text-stone-500'}`}>
+                        {s.status}
+                      </span>
+                    </div>
+                    <p className="text-sm text-stone-500">{s.subscription_plans?.name ?? '—'}</p>
+                    <p className="text-xs text-stone-400 mt-1">
+                      {s.next_billing_date ? `Next billing: ${new Date(s.next_billing_date).toLocaleDateString()}` : `Started: ${formatDate(s.created_at)}`}
+                    </p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-lg font-bold text-stone-800">
+                      ${Number(s.subscription_plans?.price ?? 0).toFixed(2)}
+                    </p>
+                    <p className="text-xs text-stone-400">/{s.subscription_plans?.billing_interval ?? 'mo'}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Subscribers Section ──────────────────────────────────────────────────────
+
+function SubscribersSection({ subscribers }) {
+  const [filter, setFilter] = useState('all')
+  const STATUSES = ['all', 'active', 'past_due', 'canceled']
+  const visible  = filter === 'all' ? subscribers : subscribers.filter(s => s.status === filter)
+  const active   = subscribers.filter(s => s.status === 'active').length
+
+  return (
+    <div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-stone-800">Product Subscribers</h1>
+        <p className="text-stone-500 mt-1">
+          {active} active subscriber{active !== 1 ? 's' : ''} across your products
+        </p>
+      </div>
+
+      <div className="flex gap-2 mb-6 flex-wrap">
+        {STATUSES.map(s => (
+          <button
+            key={s}
+            onClick={() => setFilter(s)}
+            className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+              filter === s
+                ? 'bg-green-700 text-white'
+                : 'bg-white text-stone-500 border border-stone-200 hover:border-stone-300'
+            }`}
+          >
+            {s === 'all' ? 'All' : s === 'past_due' ? 'Past due' : s.charAt(0).toUpperCase() + s.slice(1)}
+            <span className="ml-1.5 opacity-60">
+              ({s === 'all' ? subscribers.length : subscribers.filter(x => x.status === s).length})
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {visible.length === 0 ? (
+        <div className="text-center py-16 bg-white rounded-2xl border border-stone-200/50">
+          <Users className="w-12 h-12 mx-auto mb-3 text-stone-200" />
+          <p className="text-stone-400">
+            {filter === 'all' ? 'No subscribers yet.' : `No ${filter} subscribers.`}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {visible.map(sub => (
+            <div key={sub.id} className="bg-white rounded-2xl border border-stone-200/50 p-5">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <p className="font-bold text-stone-800">
+                      {sub.profiles?.full_name ?? 'Guest'}
+                    </p>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                      SUB_STATUS_COLORS[sub.status] ?? 'bg-stone-100 text-stone-500'
+                    }`}>
+                      {sub.status === 'past_due' ? 'Past due' : sub.status}
+                    </span>
+                  </div>
+                  <p className="text-sm text-stone-500">
+                    {sub.products?.name ?? 'Unknown product'}
+                    {sub.products?.unit_name ? ` · per ${sub.products.unit_name}` : ''}
+                  </p>
+                  <p className="text-xs text-stone-400 mt-1">
+                    Subscribed {formatDate(sub.created_at)}
+                  </p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  {sub.current_period_end && (
+                    <p className="text-sm text-stone-500">
+                      Next billing
+                    </p>
+                  )}
+                  {sub.current_period_end && (
+                    <p className="text-sm font-semibold text-stone-800">
+                      {formatDate(sub.current_period_end)}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
 // ─── Subscription Section ─────────────────────────────────────────────────────
 
-function SubscriptionSection({ farm, onConnect, connectLoading }) {
-  const stripeConnected = !!farm?.stripe_account_id
+function SubscriptionSection({ farm, onConnect, connectLoading, onManage, portalLoading, dbPlans, platformSub, planLoading, onSwitchPlan }) {
+  const stripeConnected   = !!farm?.stripe_account_id
+  const currentPlanSlug   = platformSub?.farm_plans?.slug ?? null
+  const hasStripeCustomer = !!platformSub?.stripe_customer_id
 
   return (
     <div>
@@ -1090,11 +1495,7 @@ function SubscriptionSection({ farm, onConnect, connectLoading }) {
               <p className="text-sm text-amber-700 mb-4">
                 Customers can browse your products, but you won't be able to receive payments until you connect a Stripe account. It only takes a few minutes.
               </p>
-              <button
-                onClick={onConnect}
-                disabled={connectLoading}
-                className={styles.buttonPrimary}
-              >
+              <button onClick={onConnect} disabled={connectLoading} className={styles.buttonPrimary}>
                 {connectLoading ? 'Redirecting to Stripe...' : 'Connect with Stripe →'}
               </button>
             </div>
@@ -1102,43 +1503,88 @@ function SubscriptionSection({ farm, onConnect, connectLoading }) {
         </div>
       )}
 
-      <div className="bg-white border border-stone-200/50 rounded-2xl p-5 mb-8 flex items-center justify-between">
+      {/* Current plan + portal button */}
+      <div className="bg-white border border-stone-200/50 rounded-2xl p-5 mb-8 flex items-center justify-between gap-4">
         <div>
           <p className="text-sm text-stone-500 font-medium mb-1">Current plan</p>
-          <p className="text-xl font-bold text-stone-800">Seed Plan — $39/mo</p>
-          <p className="text-sm text-stone-400 mt-1">Billing managed via Stripe</p>
+          {platformSub ? (
+            <>
+              <p className="text-xl font-bold text-stone-800">{platformSub.farm_plans?.name ?? 'Unknown plan'}</p>
+              <p className="text-sm text-stone-400 mt-1">Billing managed via Stripe</p>
+            </>
+          ) : (
+            <p className="text-xl font-bold text-stone-800 text-stone-400">No active plan</p>
+          )}
         </div>
-        <span className="bg-green-100 text-green-700 px-4 py-2 rounded-full text-sm font-semibold">Active</span>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {platformSub && (
+            <span className={`px-4 py-2 rounded-full text-sm font-semibold ${SUB_STATUS_COLORS[platformSub.status] ?? 'bg-stone-100 text-stone-600'}`}>
+              {platformSub.status.charAt(0).toUpperCase() + platformSub.status.slice(1)}
+            </span>
+          )}
+          {hasStripeCustomer && (
+            <button
+              onClick={onManage}
+              disabled={portalLoading}
+              className={`${styles.buttonSecondary} disabled:opacity-60 disabled:cursor-not-allowed`}
+            >
+              {portalLoading ? 'Opening...' : 'Manage subscription'}
+            </button>
+          )}
+        </div>
       </div>
 
+      {/* Plan cards */}
       <h2 className="text-lg font-bold text-stone-800 mb-4">Available plans</h2>
       <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-        {PLANS.map(plan => (
-          <div key={plan.name} className="bg-white rounded-2xl border border-stone-200/50 p-5">
-            <h3 className="font-bold text-stone-800 mb-1">{plan.name}</h3>
-            <p className="text-2xl font-bold text-green-700 mb-4">
-              {plan.price}
-              <span className="text-sm font-normal text-stone-400">{plan.period}</span>
-            </p>
-            <ul className="space-y-2">
-              {plan.features.map(f => (
-                <li key={f} className="flex items-start gap-2 text-sm text-stone-600">
-                  <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
-                  {f}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+        {PLANS.map(plan => {
+          const dbPlan   = dbPlans.find(p => p.slug === plan.slug)
+          const isCurrent = dbPlan && dbPlan.slug === currentPlanSlug
+          const busy      = planLoading || portalLoading
+          return (
+            <div
+              key={plan.slug}
+              className={`rounded-2xl border p-5 flex flex-col ${
+                isCurrent
+                  ? 'bg-green-50 border-green-300 ring-2 ring-green-500/20'
+                  : 'bg-white border-stone-200/50'
+              }`}
+            >
+              <div className="flex items-start justify-between mb-1">
+                <h3 className="font-bold text-stone-800">{plan.name}</h3>
+                {isCurrent && (
+                  <span className="text-xs bg-green-600 text-white px-2 py-0.5 rounded-full font-medium">
+                    Current
+                  </span>
+                )}
+              </div>
+              <p className="text-2xl font-bold text-green-700 mb-4">
+                {plan.price}
+                <span className="text-sm font-normal text-stone-400">{plan.period}</span>
+              </p>
+              <ul className="space-y-2 flex-1 mb-4">
+                {plan.features.map(f => (
+                  <li key={f} className="flex items-start gap-2 text-sm text-stone-600">
+                    <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              <button
+                onClick={() => dbPlan && onSwitchPlan(dbPlan.id)}
+                disabled={busy || isCurrent || !dbPlan}
+                className={`w-full text-sm font-medium py-2 rounded-xl transition-all disabled:cursor-not-allowed ${
+                  isCurrent
+                    ? 'bg-green-100 text-green-700 opacity-60'
+                    : 'bg-stone-100 text-stone-700 hover:bg-green-600 hover:text-white disabled:opacity-50'
+                }`}
+              >
+                {isCurrent ? 'Current plan' : busy ? 'Loading...' : 'Switch to this plan'}
+              </button>
+            </div>
+          )
+        })}
       </div>
-
-      <p className="text-sm text-stone-400 text-center">
-        To change your plan or manage billing, contact{' '}
-        <a href="mailto:billing@kernharvest.com" className="text-green-700 underline">
-          billing@kernharvest.com
-        </a>
-        . Stripe billing portal coming soon.
-      </p>
     </div>
   )
 }

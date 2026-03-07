@@ -65,11 +65,14 @@ export default function HomePage() {
               {profile ? (
                 <>
                   <button
-                    onClick={() => navigate('/account')}
+                    onClick={() => {
+                      const dest = { admin: '/admin', farmer: '/dashboard', driver: '/driver' }[profile.role] ?? '/account'
+                      navigate(dest)
+                    }}
                     className="flex items-center gap-2 text-stone-600 hover:text-green-700 font-medium transition-colors"
                   >
                     <UserCircle className="w-5 h-5" />
-                    My Account
+                    {profile.role === 'customer' ? 'My Account' : 'My Dashboard'}
                   </button>
                 </>
               ) : (

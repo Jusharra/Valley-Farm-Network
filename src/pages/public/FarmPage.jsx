@@ -1,15 +1,58 @@
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, MapPin, Truck, Store, Leaf } from 'lucide-react'
+import { ChevronLeft, MapPin, Truck, Store, Leaf, Share2, ShoppingBag } from 'lucide-react'
 import { useFarm } from '../../hooks/useFarm'
 import { styles } from '../../lib/styles'
 import { useCart } from '../../context/CartContext'
+import { supabase } from '../../lib/supabase'
 
 
 export default function FarmPage() {
   const { slug }  = useParams()
   const navigate  = useNavigate()
-  const { items, addToCart } = useCart()
+  const { items, total, addToCart } = useCart()
   const { farm, products, deliveryZones, loading, error } = useFarm(slug)
+  const [copied, setCopied]           = useState(false)
+  const [subscribing, setSubscribing] = useState(null)   // productId being subscribed
+  const [subError, setSubError]       = useState(null)
+
+  const itemCount = items.reduce((sum, i) => sum + i.quantity, 0)
+
+  async function handleSubscribe(product) {
+    setSubError(null)
+    setSubscribing(product.id)
+    try {
+      const { data, error: fnErr } = await supabase.functions.invoke('create-subscription-session', {
+        body: { farmId: farm.id, productId: product.id, farmSlug: farm.slug },
+      })
+      if (fnErr) {
+        // Extract the real error message from the edge function response body
+        let message = fnErr.message
+        try {
+          const body = await fnErr.context?.json()
+          if (body?.error) message = body.error
+        } catch {}
+        throw new Error(message)
+      }
+      if (data?.error) throw new Error(data.error)
+      window.location.href = data.url
+    } catch (err) {
+      setSubError(err.message)
+      setSubscribing(null)
+    }
+  }
+
+  function handleShare() {
+    const url = `${window.location.origin}/farms/${farm.slug}`
+    if (navigator.share) {
+      navigator.share({ title: farm.farm_name, text: farm.tagline ?? '', url })
+    } else {
+      navigator.clipboard.writeText(url).then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      })
+    }
+  }
 
   if (loading) {
     return (
@@ -56,10 +99,14 @@ export default function FarmPage() {
             <ChevronLeft className="w-5 h-5" />
             <span className="font-medium">Back to market</span>
           </button>
-          {items.length > 0 && (
-            <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
-              {items.length} {items.length === 1 ? 'item' : 'items'} in cart
-            </span>
+          {itemCount > 0 && (
+            <button
+              onClick={() => navigate('/checkout')}
+              className="flex items-center gap-2 bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-full text-sm font-medium transition-colors"
+            >
+              <ShoppingBag className="w-4 h-4" />
+              {itemCount} {itemCount === 1 ? 'item' : 'items'} · ${total.toFixed(2)}
+            </button>
           )}
         </div>
       </div>
@@ -100,8 +147,10 @@ export default function FarmPage() {
               )}
             </div>
             <div className="flex gap-3">
-              <button className={styles.buttonSecondary}>Share</button>
-              <button className={styles.buttonPrimary}>Subscribe</button>
+              <button onClick={handleShare} className={styles.buttonSecondary}>
+                <Share2 className="w-4 h-4 inline mr-1.5 -mt-0.5" />
+                {copied ? 'Link copied!' : 'Share'}
+              </button>
             </div>
           </div>
 
@@ -161,9 +210,17 @@ export default function FarmPage() {
                   product.product_type === 'subscription' || product.product_type === 'both'
                 return (
                   <div key={product.id} className={`${styles.card} p-6 transition-all hover:shadow-xl`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-4">
+                      {/* Product image */}
+                      <div className="w-20 h-20 rounded-xl overflow-hidden flex-shrink-0 bg-stone-100 flex items-center justify-center">
+                        {product.image_url
+                          ? <img src={product.image_url} alt={product.name} className="w-full h-full object-cover" />
+                          : <Leaf className="w-8 h-8 text-stone-300" />
+                        }
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <h3 className="font-bold text-stone-800">{product.name}</h3>
                           {hasSubscription && (
                             <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full font-medium">
@@ -177,7 +234,7 @@ export default function FarmPage() {
                           <span className="text-sm font-normal text-stone-400"> / {product.unit_name}</span>
                         </p>
                       </div>
-                      <div className="flex flex-col gap-2 ml-6">
+                      <div className="flex flex-col gap-2 ml-2 flex-shrink-0">
                         <button
                           onClick={() => addToCart(farm.id, product, farm.farm_name)}
                           className={styles.buttonPrimary}
@@ -185,8 +242,12 @@ export default function FarmPage() {
                           Add to cart
                         </button>
                         {hasSubscription && (
-                          <button className="text-green-700 font-medium text-sm hover:underline">
-                            Subscribe weekly →
+                          <button
+                            onClick={() => handleSubscribe(product)}
+                            disabled={subscribing === product.id}
+                            className="text-green-700 font-medium text-sm hover:underline disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            {subscribing === product.id ? 'Redirecting…' : 'Subscribe weekly →'}
                           </button>
                         )}
                       </div>
@@ -194,6 +255,13 @@ export default function FarmPage() {
                   </div>
                 )
               })}
+
+            </div>
+          )}
+
+          {subError && (
+            <div className="mt-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
+              {subError}
             </div>
           )}
         </div>

@@ -1,17 +1,20 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Leaf, BarChart3, Store, Package, ShoppingBag, Users, Truck, Settings,
-  DollarSign, Star, CheckCircle, XCircle, ShieldCheck, Power,
+  DollarSign, Star, CheckCircle, XCircle, ShieldCheck, Power, Globe, Plus, ExternalLink, Camera, X, Edit2, Trash2,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
+import { styles } from '../../lib/styles'
+import AccountSettings from '../../components/AccountSettings'
 
 const NAV_ITEMS = [
   { id: 'overview',     label: 'Overview',     icon: BarChart3   },
   { id: 'farms',        label: 'Farms',        icon: Store       },
   { id: 'products',     label: 'Products',     icon: Package     },
-  { id: 'orders',       label: 'Orders',       icon: ShoppingBag },
+  { id: 'storefront',   label: 'Storefront',   icon: Globe       },
+  { id: 'orders',       label: 'Platform Orders',       icon: ShoppingBag },
   { id: 'subscribers',  label: 'Subscribers',  icon: Users       },
   { id: 'drivers',      label: 'Drivers',      icon: Truck       },
   { id: 'settings',     label: 'Settings',     icon: Settings    },
@@ -82,7 +85,7 @@ const fmt = n => (n == null ? '—' : Number(n).toFixed(2))
 
 export default function AdminDashboard() {
   const navigate = useNavigate()
-  const { profile, signOut } = useAuth()
+  const { profile, session, signOut } = useAuth()
   const [activeTab, setActiveTab] = useState('overview')
 
   // Per-tab state
@@ -107,6 +110,25 @@ export default function AdminDashboard() {
 
   const [categories, setCategories]   = useState([])
   const [catsLoading, setCatsLoading] = useState(false)
+
+  // Storefront (admin's own farm)
+  const [myFarm, setMyFarm]                       = useState(null)
+  const [storefrontLoading, setStorefrontLoading] = useState(false)
+  const [adminCategories, setAdminCategories]     = useState([])
+  const [showProductForm, setShowProductForm]     = useState(false)
+  const [productForm, setProductForm]             = useState({ name: '', price: '', unit_name: 'each', product_type: 'one_time', category_id: '', description: '', image_url: '', is_active: true })
+  const [savingProduct, setSavingProduct]         = useState(false)
+  const [editingProduct, setEditingProduct]       = useState(null)
+  const [confirmDelete, setConfirmDelete]         = useState(null)
+  const [farmForm, setFarmForm]                   = useState({ farm_name: '', slug: '', description: '', tagline: '', banner_url: '' })
+  const [savingFarm, setSavingFarm]               = useState(false)
+  const [bannerUploading, setBannerUploading]     = useState(false)
+  const bannerInputRef                            = useRef(null)
+  const [productImgUploading, setProductImgUploading] = useState(false)
+  const productImgInputRef                        = useRef(null)
+  const [myOrders, setMyOrders]                   = useState([])
+  const [mySubscriptions, setMySubscriptions]     = useState([])
+  const [myOrdersLoading, setMyOrdersLoading]     = useState(false)
 
   useEffect(() => {
     if (activeTab === 'overview') {
@@ -141,13 +163,25 @@ export default function AdminDashboard() {
     }
 
     if (activeTab === 'products') {
+      const uid = session?.user?.id
       setProductsLoading(true)
-      supabase
-        .from('products')
-        .select('id, name, price, unit_name, is_active, farms(farm_name), categories(name)')
-        .order('created_at', { ascending: false }).limit(150)
-        .then(({ data }) => setProducts(data ?? []))
-        .finally(() => setProductsLoading(false))
+      Promise.all([
+        uid ? supabase.from('farms').select('id, farm_name, slug').eq('owner_id', uid).maybeSingle() : Promise.resolve({ data: null }),
+        supabase.from('categories').select('id, name').eq('is_active', true).order('sort_order'),
+      ]).then(async ([farmR, catsR]) => {
+        if (farmR.data) {
+          setMyFarm(farmR.data)
+          const { data: prodsData } = await supabase
+            .from('products')
+            .select('id, name, price, unit_name, product_type, is_active, image_url, description, category_id, categories(name, color_hex)')
+            .eq('farm_id', farmR.data.id)
+            .order('created_at', { ascending: false })
+          setProducts(prodsData ?? [])
+        } else {
+          setProducts([])
+        }
+        setAdminCategories(catsR.data ?? [])
+      }).finally(() => setProductsLoading(false))
     }
 
     if (activeTab === 'orders') {
@@ -189,6 +223,39 @@ export default function AdminDashboard() {
         .then(({ data }) => setCategories(data ?? []))
         .finally(() => setCatsLoading(false))
     }
+
+    if (activeTab === 'storefront') {
+      const uid = session?.user?.id
+      if (!uid) return
+      setStorefrontLoading(true)
+      Promise.all([
+        supabase.from('farms').select('id, farm_name, slug, description, tagline, banner_url, is_active').eq('owner_id', uid).maybeSingle(),
+        supabase.from('categories').select('id, name').eq('is_active', true).order('sort_order'),
+      ]).then(async ([farmR, catsR]) => {
+        const farm = farmR.data ?? null
+        setMyFarm(farm)
+        if (farm) setFarmForm({ farm_name: farm.farm_name, slug: farm.slug, description: farm.description ?? '', tagline: farm.tagline ?? '', banner_url: farm.banner_url ?? '' })
+        setAdminCategories(catsR.data ?? [])
+        if (farmR.data?.id) {
+          setMyOrdersLoading(true)
+          const [ordersR, subsR] = await Promise.all([
+            supabase
+              .from('orders')
+              .select('id, order_number, total_amount, status, created_at, profiles(full_name)')
+              .eq('farm_id', farmR.data.id)
+              .order('created_at', { ascending: false }),
+            supabase
+              .from('customer_subscriptions')
+              .select('id, status, next_billing_date, created_at, profiles(full_name, email), subscription_plans(name, price, billing_interval)')
+              .eq('farm_id', farmR.data.id)
+              .order('created_at', { ascending: false }),
+          ])
+          setMyOrders(ordersR.data ?? [])
+          setMySubscriptions(subsR.data ?? [])
+          setMyOrdersLoading(false)
+        }
+      }).finally(() => setStorefrontLoading(false))
+    }
   }, [activeTab])
 
   // ── Mutations ──
@@ -200,17 +267,125 @@ export default function AdminDashboard() {
     if (error) setFarms(prev => prev.map(f => f.id === farm.id ? { ...f, is_featured: farm.is_featured } : f))
   }
 
-  async function toggleProductActive(product) {
-    const next = !product.is_active
-    setProducts(prev => prev.map(p => p.id === product.id ? { ...p, is_active: next } : p))
-    const { error } = await supabase.from('products').update({ is_active: next }).eq('id', product.id)
-    if (error) setProducts(prev => prev.map(p => p.id === product.id ? { ...p, is_active: product.is_active } : p))
+  async function updateDriverField(driver, field, value) {
+    // Approving the BGC also activates the driver in one step
+    const updates = field === 'background_check_status' && value === 'approved'
+      ? { background_check_status: 'approved', is_active: true }
+      : { [field]: value }
+    setDrivers(prev => prev.map(d => d.id === driver.id ? { ...d, ...updates } : d))
+    const { error } = await supabase.from('drivers').update(updates).eq('id', driver.id)
+    if (error) setDrivers(prev => prev.map(d => d.id === driver.id ? { ...d, [field]: driver[field] } : d))
   }
 
-  async function updateDriverField(driver, field, value) {
-    setDrivers(prev => prev.map(d => d.id === driver.id ? { ...d, [field]: value } : d))
-    const { error } = await supabase.from('drivers').update({ [field]: value }).eq('id', driver.id)
-    if (error) setDrivers(prev => prev.map(d => d.id === driver.id ? { ...d, [field]: driver[field] } : d))
+  async function handleBannerUpload(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBannerUploading(true)
+    const ext  = file.name.split('.').pop()
+    const path = `${session.user.id}/banner-${Date.now()}.${ext}`
+    const { error: upErr } = await supabase.storage.from('farm-images').upload(path, file, { upsert: true })
+    if (upErr) {
+      console.error('Banner upload error:', upErr.message)
+      alert(`Upload failed: ${upErr.message}`)
+      setBannerUploading(false)
+      return
+    }
+    const { data: { publicUrl } } = supabase.storage.from('farm-images').getPublicUrl(path)
+    setFarmForm(f => ({ ...f, banner_url: publicUrl }))
+    setBannerUploading(false)
+  }
+
+  async function handleProductImgUpload(e) {
+    const file = e.target.files?.[0]
+    if (!file || !myFarm) return
+    setProductImgUploading(true)
+    const ext  = file.name.split('.').pop()
+    const path = `${myFarm.id}/${Date.now()}.${ext}`
+    const { error: upErr } = await supabase.storage.from('product-images').upload(path, file, { upsert: true })
+    if (upErr) { setProductImgUploading(false); return }
+    const { data: { publicUrl } } = supabase.storage.from('product-images').getPublicUrl(path)
+    setProductForm(f => ({ ...f, image_url: publicUrl }))
+    setProductImgUploading(false)
+  }
+
+  async function createFarm(e) {
+    e.preventDefault()
+    setSavingFarm(true)
+    const { data, error } = await supabase
+      .from('farms')
+      .insert({
+        farm_name:   farmForm.farm_name,
+        slug:        farmForm.slug,
+        description: farmForm.description || null,
+        tagline:     farmForm.tagline     || null,
+        banner_url:  farmForm.banner_url  || null,
+        owner_id:    session.user.id,
+        is_active:   true,
+      })
+      .select('id, farm_name, slug, is_active')
+      .single()
+    if (!error && data) setMyFarm(data)
+    setSavingFarm(false)
+  }
+
+  async function updateFarm(e) {
+    e.preventDefault()
+    setSavingFarm(true)
+    const { data, error } = await supabase
+      .from('farms')
+      .update({
+        farm_name:   farmForm.farm_name,
+        slug:        farmForm.slug,
+        description: farmForm.description || null,
+        tagline:     farmForm.tagline     || null,
+        banner_url:  farmForm.banner_url  || null,
+      })
+      .eq('id', myFarm.id)
+      .select('id, farm_name, slug, description, tagline, banner_url, is_active')
+      .single()
+    if (!error && data) setMyFarm(data)
+    setSavingFarm(false)
+  }
+
+  async function handleSaveProduct(e) {
+    e.preventDefault()
+    setSavingProduct(true)
+    const selectStr = 'id, name, price, unit_name, product_type, is_active, image_url, description, category_id, categories(name, color_hex)'
+    const fields = {
+      name:         productForm.name,
+      price:        parseFloat(productForm.price),
+      unit_name:    productForm.unit_name    || 'each',
+      product_type: productForm.product_type || 'one_time',
+      category_id:  productForm.category_id  || null,
+      description:  productForm.description  || null,
+      image_url:    productForm.image_url    || null,
+      is_active:    productForm.is_active,
+    }
+    let data, error
+    if (editingProduct) {
+      ;({ data, error } = await supabase.from('products').update(fields).eq('id', editingProduct.id).select(selectStr).single())
+      if (!error && data) setProducts(prev => prev.map(p => p.id === data.id ? data : p))
+    } else {
+      const base = productForm.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+      const slug = `${base}-${Date.now().toString(36)}`
+      ;({ data, error } = await supabase.from('products').insert({ ...fields, slug, farm_id: myFarm.id }).select(selectStr).single())
+      if (!error && data) setProducts(prev => [data, ...prev])
+    }
+    if (error) {
+      alert(`Failed to save product: ${error.message}`)
+    } else {
+      setProductForm({ name: '', price: '', unit_name: 'each', product_type: 'one_time', category_id: '', description: '', image_url: '', is_active: true })
+      setEditingProduct(null)
+      setShowProductForm(false)
+    }
+    setSavingProduct(false)
+  }
+
+  async function deleteProduct(id) {
+    const { error } = await supabase.from('products').delete().eq('id', id)
+    if (error) { alert(`Failed to delete: ${error.message}`); return }
+    setProducts(prev => prev.filter(p => p.id !== id))
+    setConfirmDelete(null)
   }
 
   async function toggleCategoryActive(cat) {
@@ -374,35 +549,476 @@ export default function AdminDashboard() {
 
           {/* ── PRODUCTS ── */}
           {activeTab === 'products' && (
-            productsLoading ? <TableSkeleton rows={6} /> : products.length === 0 ? <EmptyState icon={Package} message="No products yet." /> : (
-              <div className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-stone-50 border-b border-stone-200">
-                    <tr>
-                      <th className="text-left px-5 py-3 font-semibold text-stone-600">Product</th>
-                      <th className="text-left px-5 py-3 font-semibold text-stone-600">Farm</th>
-                      <th className="text-left px-5 py-3 font-semibold text-stone-600">Category</th>
-                      <th className="text-right px-5 py-3 font-semibold text-stone-600">Price</th>
-                      <th className="text-center px-5 py-3 font-semibold text-stone-600">Active</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-100">
-                    {products.map(p => (
-                      <tr key={p.id} className="hover:bg-stone-50 transition-colors">
-                        <td className="px-5 py-3 font-medium text-stone-800">{p.name}</td>
-                        <td className="px-5 py-3 text-stone-500">{p.farms?.farm_name ?? '—'}</td>
-                        <td className="px-5 py-3 text-stone-400">{p.categories?.name ?? '—'}</td>
-                        <td className="px-5 py-3 text-right">
-                          <span className="font-medium">${fmt(p.price)}</span>
-                          <span className="text-stone-400">/{p.unit_name ?? 'each'}</span>
-                        </td>
-                        <td className="px-5 py-3 flex justify-center">
-                          <Toggle on={p.is_active} onToggle={() => toggleProductActive(p)} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            productsLoading ? <TableSkeleton rows={6} /> : (
+              <>
+                {!myFarm ? (
+                  <EmptyState icon={Package} message="Set up your storefront first to add products." />
+                ) : (
+                  <div>
+                    <div className="flex items-center justify-between mb-6">
+                      <div>
+                        <h2 className="text-xl font-bold text-stone-800">Products</h2>
+                        <p className="text-stone-500 mt-1">{products.filter(p => p.is_active).length} active · {products.length} total</p>
+                      </div>
+                      <button
+                        onClick={() => { setEditingProduct(null); setProductForm({ name: '', price: '', unit_name: 'each', product_type: 'one_time', category_id: '', description: '', image_url: '', is_active: true }); setShowProductForm(true) }}
+                        className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-green-700 transition-colors"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Add product
+                      </button>
+                    </div>
+
+                    {products.length === 0 ? (
+                      <div className="text-center py-20 bg-white rounded-2xl border border-stone-200/50">
+                        <Package className="w-14 h-14 mx-auto mb-4 text-stone-200" />
+                        <h3 className="text-lg font-bold text-stone-700 mb-2">No products yet</h3>
+                        <p className="text-stone-400 mb-6 max-w-xs mx-auto text-sm">Add your first product so customers can start ordering.</p>
+                        <button
+                          onClick={() => { setEditingProduct(null); setProductForm({ name: '', price: '', unit_name: 'each', product_type: 'one_time', category_id: '', description: '', image_url: '', is_active: true }); setShowProductForm(true) }}
+                          className="inline-flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-green-700 transition-colors"
+                        >
+                          <Plus className="w-4 h-4" /> Add your first product
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {products.map(p => {
+                          const isDeleting = confirmDelete === p.id
+                          return (
+                            <div
+                              key={p.id}
+                              className={`bg-white rounded-2xl border p-5 transition-all ${
+                                isDeleting ? 'border-red-200 bg-red-50' : 'border-stone-200/50 hover:shadow-md'
+                              }`}
+                            >
+                              {isDeleting ? (
+                                <div className="flex items-center justify-between gap-4">
+                                  <p className="text-red-700 font-medium text-sm">Remove "{p.name}" from your products?</p>
+                                  <div className="flex gap-2 flex-shrink-0">
+                                    <button onClick={() => setConfirmDelete(null)} className="px-4 py-2 rounded-full text-sm font-medium border border-stone-200 text-stone-600 hover:bg-stone-50 transition-all">Cancel</button>
+                                    <button
+                                      onClick={() => deleteProduct(p.id)}
+                                      disabled={savingProduct}
+                                      className="bg-red-600 text-white px-5 py-2 rounded-full font-medium hover:bg-red-700 transition-all text-sm disabled:opacity-60"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-4">
+                                  {p.image_url ? (
+                                    <img src={p.image_url} alt={p.name} className="w-16 h-16 rounded-xl object-cover flex-shrink-0" />
+                                  ) : (
+                                    <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-green-100 to-amber-100 flex-shrink-0" />
+                                  )}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                      <h3 className="font-bold text-stone-800">{p.name}</h3>
+                                      {!p.is_active && <span className="text-xs bg-stone-100 text-stone-500 px-2 py-0.5 rounded-full">Inactive</span>}
+                                      {p.product_type !== 'one_time' && (
+                                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                                          {p.product_type === 'subscription' ? 'Sub only' : 'Sub available'}
+                                        </span>
+                                      )}
+                                      {p.categories && (
+                                        <span
+                                          className="text-xs px-2 py-0.5 rounded-full"
+                                          style={{ backgroundColor: `${p.categories.color_hex}20`, color: p.categories.color_hex }}
+                                        >
+                                          {p.categories.name}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {p.description && <p className="text-sm text-stone-400 mb-1.5 truncate max-w-lg">{p.description}</p>}
+                                    <div className="flex items-center gap-3">
+                                      <span className="text-lg font-bold text-green-700">${Number(p.price).toFixed(2)}</span>
+                                      <span className="text-stone-400 text-sm">/ {p.unit_name}</span>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-1 flex-shrink-0">
+                                    <button
+                                      onClick={() => {
+                                        setEditingProduct(p)
+                                        setProductForm({ name: p.name, price: String(p.price), unit_name: p.unit_name ?? 'each', product_type: p.product_type ?? 'one_time', category_id: p.category_id ?? '', description: p.description ?? '', image_url: p.image_url ?? '', is_active: p.is_active })
+                                        setShowProductForm(true)
+                                      }}
+                                      className="p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg transition-all"
+                                      title="Edit"
+                                    >
+                                      <Edit2 className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => setConfirmDelete(p.id)}
+                                      className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                      title="Delete"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Product drawer ── */}
+                {showProductForm && (
+                  <div className="fixed inset-0 z-40 flex">
+                    <div className="flex-1 bg-black/40" onClick={() => { setShowProductForm(false); setEditingProduct(null) }} />
+                    <div className="w-full max-w-md bg-white shadow-2xl flex flex-col overflow-y-auto">
+                      <div className="flex items-center justify-between p-6 border-b border-stone-100">
+                        <h2 className="text-lg font-bold text-stone-800">{editingProduct ? 'Edit product' : 'Add product'}</h2>
+                        <button onClick={() => { setShowProductForm(false); setEditingProduct(null) }} className="p-2 hover:bg-stone-100 rounded-lg transition-colors">
+                          <X className="w-5 h-5 text-stone-400" />
+                        </button>
+                      </div>
+                      <form onSubmit={handleSaveProduct} className="flex-1 p-6 space-y-5">
+                        <div>
+                          <label className="block text-sm font-semibold text-stone-700 mb-1.5">Product name *</label>
+                          <input required className={styles.input} placeholder="e.g. Organic Tomatoes"
+                            value={productForm.name} onChange={e => setProductForm(f => ({ ...f, name: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-semibold text-stone-700 mb-1.5">Description</label>
+                          <textarea className={`${styles.input} resize-none`} rows={3} placeholder="Tell customers about this product..."
+                            value={productForm.description} onChange={e => setProductForm(f => ({ ...f, description: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-semibold text-stone-700 mb-1.5">Product photo</label>
+                          <input ref={productImgInputRef} type="file" accept="image/*" className="hidden" onChange={handleProductImgUpload} />
+                          {productForm.image_url ? (
+                            <div className="relative">
+                              <img src={productForm.image_url} alt="Product preview" className="w-full h-40 object-cover rounded-xl border border-stone-200" />
+                              <button type="button" onClick={() => productImgInputRef.current?.click()} disabled={productImgUploading}
+                                className="absolute bottom-2 right-2 bg-black/50 hover:bg-black/70 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-60">
+                                <Camera className="w-3.5 h-3.5" />
+                                {productImgUploading ? 'Uploading…' : 'Change'}
+                              </button>
+                              <button type="button" onClick={() => setProductForm(f => ({ ...f, image_url: '' }))}
+                                className="absolute top-2 right-2 bg-white/80 hover:bg-white rounded-full p-1 shadow">
+                                <X className="w-3.5 h-3.5 text-stone-600" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button type="button" onClick={() => productImgInputRef.current?.click()} disabled={productImgUploading}
+                              className="w-full h-32 border-2 border-dashed border-stone-300 hover:border-green-400 rounded-xl flex flex-col items-center justify-center gap-2 text-stone-400 hover:text-green-600 transition-colors disabled:opacity-60">
+                              <Camera className="w-6 h-6" />
+                              <span className="text-sm font-medium">{productImgUploading ? 'Uploading…' : 'Upload photo'}</span>
+                            </button>
+                          )}
+                          <p className="text-xs text-stone-400 mt-1.5">Best size: 800 × 600 px. JPG or PNG.</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-semibold text-stone-700 mb-1.5">Price *</label>
+                            <div className="relative">
+                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 font-medium">$</span>
+                              <input required type="number" min="0.01" step="0.01" className={`${styles.input} pl-8`} placeholder="0.00"
+                                value={productForm.price} onChange={e => setProductForm(f => ({ ...f, price: e.target.value }))} />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-semibold text-stone-700 mb-1.5">Unit *</label>
+                            <input required list="admin-unit-presets" className={styles.input} placeholder="lb, each, dozen…"
+                              value={productForm.unit_name} onChange={e => setProductForm(f => ({ ...f, unit_name: e.target.value }))} />
+                            <datalist id="admin-unit-presets">
+                              {['each', 'dozen', 'lb', 'oz', 'bunch', 'bag', 'box', 'jar', 'pint', 'quart', 'gallon'].map(u => <option key={u} value={u} />)}
+                            </datalist>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-semibold text-stone-700 mb-1.5">Category</label>
+                          <select className={styles.input} value={productForm.category_id}
+                            onChange={e => setProductForm(f => ({ ...f, category_id: e.target.value }))}>
+                            <option value="">No category</option>
+                            {adminCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-semibold text-stone-700 mb-2">Ordering type</label>
+                          <div className="space-y-2">
+                            {[
+                              { value: 'one_time',     label: 'One-time purchase only' },
+                              { value: 'subscription', label: 'Subscription only' },
+                              { value: 'both',         label: 'Both — customer chooses' },
+                            ].map(opt => (
+                              <label key={opt.value} className="flex items-center gap-3 cursor-pointer">
+                                <input type="radio" name="admin_product_type" value={opt.value}
+                                  checked={productForm.product_type === opt.value}
+                                  onChange={() => setProductForm(f => ({ ...f, product_type: opt.value }))}
+                                  className="w-4 h-4 text-green-600" />
+                                <span className="text-stone-700 text-sm">{opt.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between p-4 bg-stone-50 rounded-xl">
+                          <div>
+                            <p className="text-sm font-semibold text-stone-700">Visible to customers</p>
+                            <p className="text-xs text-stone-400 mt-0.5">Toggle off to hide this product</p>
+                          </div>
+                          <button type="button"
+                            onClick={() => setProductForm(f => ({ ...f, is_active: !f.is_active }))}
+                            className={`w-12 h-6 rounded-full transition-all relative flex-shrink-0 ${productForm.is_active ? 'bg-green-500' : 'bg-stone-300'}`}
+                          >
+                            <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${productForm.is_active ? 'left-6' : 'left-0.5'}`} />
+                          </button>
+                        </div>
+                        <div className="flex gap-3 pt-2 border-t border-stone-100">
+                          <button type="button" onClick={() => { setShowProductForm(false); setEditingProduct(null) }}
+                            className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium border border-stone-200 text-stone-600 hover:bg-stone-50 transition-all">
+                            Cancel
+                          </button>
+                          <button type="submit" disabled={savingProduct}
+                            className="flex-1 bg-green-600 text-white px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-60">
+                            {savingProduct ? 'Saving…' : editingProduct ? 'Save changes' : 'Add product'}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                )}
+              </>
+            )
+          )}
+
+          {/* ── STOREFRONT ── */}
+          {activeTab === 'storefront' && (
+            storefrontLoading ? <TableSkeleton rows={4} /> : (
+              <div className="space-y-6">
+                {myFarm === null ? (
+                  /* No farm yet */
+                  <div className="bg-white rounded-2xl border border-stone-200 p-6 max-w-lg">
+                    <h2 className="font-bold text-stone-800 mb-1">Set up your storefront</h2>
+                    <p className="text-stone-400 text-sm mb-5">Create your own marketplace presence to list and sell products.</p>
+                    <form onSubmit={createFarm} className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">Store name</label>
+                        <input
+                          type="text" required className={styles.input}
+                          placeholder="Kern Harvest Marketplace"
+                          value={farmForm.farm_name}
+                          onChange={e => {
+                            const name = e.target.value
+                            const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+                            setFarmForm(f => ({ ...f, farm_name: name, slug }))
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">URL slug</label>
+                        <div className="flex items-center gap-1">
+                          <span className="text-stone-400 text-sm shrink-0">/farms/</span>
+                          <input
+                            type="text" required className={styles.input}
+                            value={farmForm.slug}
+                            onChange={e => setFarmForm(f => ({ ...f, slug: e.target.value }))}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">Tagline (optional)</label>
+                        <input type="text" className={styles.input} placeholder="Fresh from Kern County"
+                          value={farmForm.tagline} onChange={e => setFarmForm(f => ({ ...f, tagline: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">Description (optional)</label>
+                        <textarea className={styles.input} rows={3}
+                          value={farmForm.description} onChange={e => setFarmForm(f => ({ ...f, description: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">Banner image (optional)</label>
+                        <input ref={bannerInputRef} type="file" accept="image/*" className="hidden" onChange={handleBannerUpload} />
+                        {farmForm.banner_url ? (
+                          <div className="relative">
+                            <img src={farmForm.banner_url} alt="Banner preview" className="w-full h-28 object-cover rounded-xl border border-stone-200" />
+                            <button type="button" onClick={() => bannerInputRef.current?.click()}
+                              className="absolute bottom-2 right-2 bg-white/80 hover:bg-white rounded-lg px-3 py-1.5 text-xs font-medium text-stone-600 shadow flex items-center gap-1.5">
+                              <Camera className="w-3 h-3" /> Change
+                            </button>
+                            <button type="button" onClick={() => setFarmForm(f => ({ ...f, banner_url: '' }))}
+                              className="absolute top-2 right-2 bg-white/80 hover:bg-white rounded-full p-1 shadow">
+                              <X className="w-3.5 h-3.5 text-stone-600" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button type="button" disabled={bannerUploading} onClick={() => bannerInputRef.current?.click()}
+                            className="w-full h-24 border-2 border-dashed border-stone-300 rounded-xl flex flex-col items-center justify-center gap-1.5 text-stone-400 hover:border-green-400 hover:text-green-600 transition-colors disabled:opacity-50">
+                            <Camera className="w-5 h-5" />
+                            <span className="text-sm">{bannerUploading ? 'Uploading…' : 'Upload banner'}</span>
+                          </button>
+                        )}
+                        <p className="text-xs text-stone-400 mt-1">1600 × 600 px recommended.</p>
+                      </div>
+                      <button type="submit" disabled={savingFarm}
+                        className="bg-green-600 text-white px-5 py-2.5 rounded-xl font-medium hover:bg-green-700 transition-colors disabled:opacity-60">
+                        {savingFarm ? 'Creating…' : 'Create storefront'}
+                      </button>
+                    </form>
+                  </div>
+                ) : (
+                  /* Farm exists */
+                  <>
+                    {/* Settings form */}
+                    <div className="bg-white rounded-2xl border border-stone-200 p-6 max-w-lg">
+                      <div className="flex items-center justify-between mb-4">
+                        <h2 className="font-bold text-stone-800">Farm settings</h2>
+                        <button
+                          onClick={() => navigate(`/farms/${myFarm.slug}`)}
+                          className="flex items-center gap-1 text-green-700 text-sm hover:underline"
+                        >
+                          View storefront <ExternalLink className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <form onSubmit={updateFarm} className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-stone-700 mb-1">Store name</label>
+                          <input type="text" required className={styles.input}
+                            value={farmForm.farm_name}
+                            onChange={e => setFarmForm(f => ({ ...f, farm_name: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-stone-700 mb-1">URL slug</label>
+                          <div className="flex items-center gap-1">
+                            <span className="text-stone-400 text-sm shrink-0">/farms/</span>
+                            <input type="text" required className={styles.input}
+                              value={farmForm.slug}
+                              onChange={e => setFarmForm(f => ({ ...f, slug: e.target.value }))} />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-stone-700 mb-1">Tagline (optional)</label>
+                          <input type="text" className={styles.input}
+                            value={farmForm.tagline}
+                            onChange={e => setFarmForm(f => ({ ...f, tagline: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-stone-700 mb-1">Description (optional)</label>
+                          <textarea className={styles.input} rows={3}
+                            value={farmForm.description}
+                            onChange={e => setFarmForm(f => ({ ...f, description: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-stone-700 mb-1">Banner image</label>
+                          <input ref={bannerInputRef} type="file" accept="image/*" className="hidden" onChange={handleBannerUpload} />
+                          {farmForm.banner_url ? (
+                            <div className="relative">
+                              <img src={farmForm.banner_url} alt="Banner preview" className="w-full h-28 object-cover rounded-xl border border-stone-200" />
+                              <button type="button" onClick={() => bannerInputRef.current?.click()}
+                                className="absolute bottom-2 right-2 bg-white/80 hover:bg-white rounded-lg px-3 py-1.5 text-xs font-medium text-stone-600 shadow flex items-center gap-1.5">
+                                <Camera className="w-3 h-3" /> Change
+                              </button>
+                              <button type="button" onClick={() => setFarmForm(f => ({ ...f, banner_url: '' }))}
+                                className="absolute top-2 right-2 bg-white/80 hover:bg-white rounded-full p-1 shadow">
+                                <X className="w-3.5 h-3.5 text-stone-600" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button type="button" disabled={bannerUploading} onClick={() => bannerInputRef.current?.click()}
+                              className="w-full h-24 border-2 border-dashed border-stone-300 rounded-xl flex flex-col items-center justify-center gap-1.5 text-stone-400 hover:border-green-400 hover:text-green-600 transition-colors disabled:opacity-50">
+                              <Camera className="w-5 h-5" />
+                              <span className="text-sm">{bannerUploading ? 'Uploading…' : 'Upload banner'}</span>
+                            </button>
+                          )}
+                          <p className="text-xs text-stone-400 mt-1">1600 × 600 px recommended.</p>
+                        </div>
+                        <button type="submit" disabled={savingFarm}
+                          className="bg-green-600 text-white px-5 py-2.5 rounded-xl font-medium hover:bg-green-700 transition-colors disabled:opacity-60">
+                          {savingFarm ? 'Saving…' : 'Save changes'}
+                        </button>
+                      </form>
+                    </div>
+
+                    {myOrdersLoading ? <TableSkeleton rows={3} /> : (
+                      <div className="space-y-6">
+                        {/* One-time orders */}
+                        <div>
+                          <h3 className="font-semibold text-stone-700 mb-3">One-Time Orders</h3>
+                          {myOrders.length === 0 ? (
+                            <EmptyState icon={ShoppingBag} message="No one-time orders yet." />
+                          ) : (
+                            <div className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
+                              <table className="w-full text-sm">
+                                <thead className="bg-stone-50 border-b border-stone-200">
+                                  <tr>
+                                    <th className="text-left px-5 py-3 font-semibold text-stone-600">Order #</th>
+                                    <th className="text-left px-5 py-3 font-semibold text-stone-600">Customer</th>
+                                    <th className="text-left px-5 py-3 font-semibold text-stone-600">Status</th>
+                                    <th className="text-right px-5 py-3 font-semibold text-stone-600">Total</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-stone-100">
+                                  {myOrders.map(o => (
+                                    <tr key={o.id} className="hover:bg-stone-50 transition-colors">
+                                      <td className="px-5 py-3 font-mono text-xs font-medium text-stone-800">{o.order_number}</td>
+                                      <td className="px-5 py-3 text-stone-600">{o.profiles?.full_name ?? 'Unknown'}</td>
+                                      <td className="px-5 py-3">
+                                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ORDER_STATUS[o.status] ?? 'bg-stone-100 text-stone-500'}`}>
+                                          {o.status?.replace(/_/g, ' ')}
+                                        </span>
+                                      </td>
+                                      <td className="px-5 py-3 text-right font-bold text-stone-800">${fmt(o.total_amount)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Subscription orders */}
+                        <div>
+                          <h3 className="font-semibold text-stone-700 mb-3">Subscriptions</h3>
+                          {mySubscriptions.length === 0 ? (
+                            <EmptyState icon={Users} message="No subscriptions yet." />
+                          ) : (
+                            <div className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
+                              <table className="w-full text-sm">
+                                <thead className="bg-stone-50 border-b border-stone-200">
+                                  <tr>
+                                    <th className="text-left px-5 py-3 font-semibold text-stone-600">Customer</th>
+                                    <th className="text-left px-5 py-3 font-semibold text-stone-600">Plan</th>
+                                    <th className="text-left px-5 py-3 font-semibold text-stone-600">Status</th>
+                                    <th className="text-left px-5 py-3 font-semibold text-stone-600">Next billing</th>
+                                    <th className="text-right px-5 py-3 font-semibold text-stone-600">Price</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-stone-100">
+                                  {mySubscriptions.map(s => (
+                                    <tr key={s.id} className="hover:bg-stone-50 transition-colors">
+                                      <td className="px-5 py-3 text-stone-800 font-medium">{s.profiles?.full_name ?? 'Unknown'}</td>
+                                      <td className="px-5 py-3 text-stone-600">{s.subscription_plans?.name ?? '—'}</td>
+                                      <td className="px-5 py-3">
+                                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                          s.status === 'active'   ? 'bg-green-100 text-green-700' :
+                                          s.status === 'paused'   ? 'bg-amber-100 text-amber-700' :
+                                          s.status === 'cancelled'? 'bg-red-100 text-red-700' :
+                                          'bg-stone-100 text-stone-500'
+                                        }`}>{s.status}</span>
+                                      </td>
+                                      <td className="px-5 py-3 text-stone-500 text-xs">
+                                        {s.next_billing_date ? new Date(s.next_billing_date).toLocaleDateString() : '—'}
+                                      </td>
+                                      <td className="px-5 py-3 text-right font-bold text-stone-800">
+                                        ${fmt(s.subscription_plans?.price)}<span className="text-stone-400 font-normal text-xs">/{s.subscription_plans?.billing_interval}</span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )
           )}
@@ -546,28 +1162,31 @@ export default function AdminDashboard() {
 
           {/* ── SETTINGS ── */}
           {activeTab === 'settings' && (
-            catsLoading ? <TableSkeleton rows={6} /> : (
-              <div className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
-                <div className="p-5 border-b border-stone-100">
-                  <h2 className="font-bold text-stone-800">Marketplace Categories</h2>
-                  <p className="text-stone-400 text-sm mt-0.5">Toggle which categories appear on the homepage and browse pages</p>
-                </div>
-                <div className="divide-y divide-stone-100">
-                  {categories.map(cat => (
-                    <div key={cat.id} className="px-5 py-4 flex items-center justify-between">
-                      <div>
-                        <p className="font-medium text-stone-800">{cat.name}</p>
-                        <p className="text-stone-400 text-xs">/category/{cat.slug}</p>
+            <div className="space-y-8">
+              {catsLoading ? <TableSkeleton rows={6} /> : (
+                <div className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
+                  <div className="p-5 border-b border-stone-100">
+                    <h2 className="font-bold text-stone-800">Marketplace Categories</h2>
+                    <p className="text-stone-400 text-sm mt-0.5">Toggle which categories appear on the homepage and browse pages</p>
+                  </div>
+                  <div className="divide-y divide-stone-100">
+                    {categories.map(cat => (
+                      <div key={cat.id} className="px-5 py-4 flex items-center justify-between">
+                        <div>
+                          <p className="font-medium text-stone-800">{cat.name}</p>
+                          <p className="text-stone-400 text-xs">/category/{cat.slug}</p>
+                        </div>
+                        <Toggle on={cat.is_active} onToggle={() => toggleCategoryActive(cat)} />
                       </div>
-                      <Toggle on={cat.is_active} onToggle={() => toggleCategoryActive(cat)} />
-                    </div>
-                  ))}
-                  {categories.length === 0 && (
-                    <p className="px-5 py-8 text-center text-stone-400">No categories found.</p>
-                  )}
+                    ))}
+                    {categories.length === 0 && (
+                      <p className="px-5 py-8 text-center text-stone-400">No categories found.</p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )
+              )}
+              <AccountSettings />
+            </div>
           )}
 
         </div>

@@ -112,6 +112,12 @@ create table public.farms (
   offers_delivery        boolean     not null default false,
   offers_pickup          boolean     not null default true,
   delivery_radius_miles  integer     check (delivery_radius_miles in (5, 10, 25, 50)),
+  -- Stripe Connect
+  stripe_account_id      text        unique,
+  charges_enabled        boolean     not null default false,
+  details_submitted      boolean     not null default false,
+  -- Platform subscription (denormalized for fast reads, kept in sync by webhook)
+  platform_plan_slug     text,
   created_at             timestamptz not null default now(),
   updated_at             timestamptz not null default now()
 );
@@ -163,8 +169,10 @@ create table public.farm_platform_subscriptions (
                                        check (status in ('active', 'past_due', 'cancelled', 'trialing')),
   starts_at                timestamptz not null default now(),
   ends_at                  timestamptz,
+  current_period_start     timestamptz,
+  current_period_end       timestamptz,
   stripe_customer_id       text,
-  stripe_subscription_id   text,
+  stripe_subscription_id   text        unique,
   created_at               timestamptz not null default now(),
   updated_at               timestamptz not null default now()
 );
@@ -679,6 +687,10 @@ create policy "Drivers can view own profile"
   on public.drivers for select
   using (auth.uid() = profile_id or public.my_role() = 'admin');
 
+create policy "Drivers can insert own profile"
+  on public.drivers for insert
+  with check (auth.uid() = profile_id);
+
 create policy "Drivers can update own profile"
   on public.drivers for update
   using (auth.uid() = profile_id);
@@ -721,6 +733,16 @@ create policy "Farm owners and admins can manage deliveries"
     or exists (
       select 1 from public.orders o
       where o.id = order_id and public.i_own_farm(o.farm_id)
+    )
+  );
+
+create policy "Order creators can insert delivery records"
+  on public.deliveries for insert
+  with check (
+    exists (
+      select 1 from public.orders o
+      where o.id = order_id
+        and (o.customer_id = auth.uid() or o.customer_id is null)
     )
   );
 
@@ -876,16 +898,89 @@ values
   ),
   (
     'Seed', 'seed',
-    'Monthly plan. Farm page, up to 10 product listings, and shareable link.',
-    'monthly', 39.00, 10, false, false, false, 1
+    'Monthly plan. Farm page, up to 20 product listings, and shareable link.',
+    'monthly', 39.00, 20, false, false, false, 1
   ),
   (
     'Growth', 'growth',
     'Monthly plan. Everything in Seed plus recurring customer subscriptions, delivery zone management, and farm analytics.',
-    'monthly', 79.00, null, true, true, true, 2
+    'monthly', 79.00, 40, true, true, true, 2
   ),
   (
     'Network Pro', 'pro',
     'Monthly plan. Everything in Growth plus driver network access, homepage placement boosts, and priority support.',
-    'monthly', 129.00, null, true, true, true, 3
+    'monthly', 129.00, 60, true, true, true, 3
   );
+
+-- ─── Product Limit Enforcement ────────────────────────────────────────────────
+
+-- Atomically syncs farms.platform_plan_slug and deactivates excess products.
+-- Called by the Stripe webhook after every subscription event.
+create or replace function public.sync_farm_plan(p_farm_id uuid, p_plan_slug text)
+returns void language plpgsql security definer as $$
+declare
+  v_max     integer;
+  v_active  integer;
+  v_excess  integer;
+begin
+  update public.farms set platform_plan_slug = p_plan_slug where id = p_farm_id;
+
+  if p_plan_slug is null then
+    update public.products set is_active = false
+    where farm_id = p_farm_id and is_active = true;
+    return;
+  end if;
+
+  select max_products into v_max
+  from public.farm_plans
+  where slug = p_plan_slug and is_active = true;
+
+  if v_max is null then return; end if;
+
+  select count(*) into v_active
+  from public.products
+  where farm_id = p_farm_id and is_active = true;
+
+  v_excess := v_active - v_max;
+
+  if v_excess > 0 then
+    update public.products set is_active = false
+    where id in (
+      select id from public.products
+      where farm_id = p_farm_id and is_active = true
+      order by created_at desc
+      limit v_excess
+    );
+  end if;
+end;
+$$;
+
+-- Trigger function: blocks INSERT when the farm has no plan or is at its limit.
+create or replace function public.check_product_limit()
+returns trigger language plpgsql security definer as $$
+declare
+  v_slug  text;
+  v_max   integer;
+  v_count integer;
+begin
+  select platform_plan_slug into v_slug from public.farms where id = new.farm_id;
+
+  if v_slug is null then
+    raise exception 'no_subscription';
+  end if;
+
+  select max_products into v_max from public.farm_plans where slug = v_slug and is_active = true;
+  if v_max is null then return new; end if;
+
+  select count(*) into v_count from public.products where farm_id = new.farm_id and is_active = true;
+  if v_count >= v_max then
+    raise exception 'product_limit_reached';
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger enforce_product_limit
+  before insert on public.products
+  for each row execute function public.check_product_limit();

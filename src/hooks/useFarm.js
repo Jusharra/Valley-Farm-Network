@@ -47,7 +47,14 @@ export function useFarm(slug) {
           setDeliveryZones(zonesData ?? [])
         }
       } catch (err) {
-        if (!cancelled) setError(err.message)
+        if (cancelled) return
+        // AbortError from Supabase Web Locks (two tabs competing for token refresh)
+        // is transient — retry once after a short delay instead of showing an error.
+        if (err.name === 'AbortError') {
+          setTimeout(() => { if (!cancelled) fetch() }, 800)
+          return
+        }
+        setError(err.message)
       } finally {
         if (!cancelled) setLoading(false)
       }

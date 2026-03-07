@@ -11,10 +11,6 @@ import { supabase } from '../../lib/supabase'
 const TAX_RATE    = 0.0825
 const DELIVERY_FEE = 5.00
 
-function genOrderNumber() {
-  return 'ORN-' + Math.random().toString(36).slice(2, 8).toUpperCase()
-}
-
 function Field({ label, required, children }) {
   return (
     <div>
@@ -30,7 +26,7 @@ const inputCls = 'w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:bo
 
 export default function CheckoutPage() {
   const navigate = useNavigate()
-  const { items, updateQuantity, removeFromCart, clearCart } = useCart()
+  const { items, updateQuantity, removeFromCart } = useCart()
   const { session } = useAuth()
 
   const [fulfillment, setFulfillment] = useState('pickup')
@@ -89,76 +85,21 @@ export default function CheckoutPage() {
 
     setLoading(true)
     try {
-      const customerId     = session?.user?.id ?? null
-      const createdOrderIds = []
+      const { data, error: fnErr } = await supabase.functions.invoke('create-checkout-session', {
+        body: { items, fulfillment, address, notes, guestInfo },
+      })
 
-      for (const group of farmGroups) {
-        const groupSubtotal   = group.items.reduce((s, i) => s + i.product.price * i.quantity, 0)
-        const groupDelivery   = fulfillment === 'delivery' ? DELIVERY_FEE : 0
-        const groupTax        = (groupSubtotal + groupDelivery) * TAX_RATE
-        const groupPlatformFee = groupSubtotal * 0.03
-        const groupTotal      = groupSubtotal + groupDelivery + groupTax
+      if (fnErr) throw new Error(fnErr.message)
+      if (data?.error) throw new Error(data.error)
 
-        const guestNote = !session
-          ? `Guest: ${guestInfo.name} <${guestInfo.email}>${guestInfo.phone ? ' ' + guestInfo.phone : ''}`
-          : ''
-
-        const { data: order, error: orderErr } = await supabase
-          .from('orders')
-          .insert({
-            customer_id:      customerId,
-            farm_id:          group.farmId,
-            order_number:     genOrderNumber(),
-            order_type:       'one_time',
-            status:           'paid',          // MVP: set paid immediately; replace with Stripe webhook
-            fulfillment_method: fulfillment,
-            subtotal:         groupSubtotal,
-            delivery_fee:     groupDelivery,
-            tax_amount:       groupTax,
-            platform_fee:     groupPlatformFee,
-            total_amount:     groupTotal,
-            notes:            [notes, guestNote].filter(Boolean).join(' | '),
-          })
-          .select('id')
-          .single()
-
-        if (orderErr) throw orderErr
-
-        const { error: itemsErr } = await supabase
-          .from('order_items')
-          .insert(group.items.map(i => ({
-            order_id:     order.id,
-            product_id:   i.product.id ?? null,
-            product_name: i.product.name,
-            quantity:     i.quantity,
-            unit_price:   i.product.price,
-            line_total:   i.product.price * i.quantity,
-          })))
-
-        if (itemsErr) throw itemsErr
-
-        if (fulfillment === 'delivery') {
-          await supabase.from('deliveries').insert({
-            order_id:                 order.id,
-            delivery_status:          'unassigned',
-            delivery_address_line_1:  address.line1,
-            city:                     address.city,
-            state:                    address.state,
-            postal_code:              address.postal_code,
-            delivery_notes:           notes,
-          })
-        }
-
-        createdOrderIds.push(order.id)
-      }
-
-      clearCart()
-      navigate(`/checkout/success?orders=${createdOrderIds.join(',')}`)
+      // Redirect to Stripe Checkout — page leaves here on success
+      window.location.href = data.url
     } catch (err) {
       setError(err.message || 'Something went wrong. Please try again.')
-    } finally {
       setLoading(false)
     }
+    // Note: setLoading(false) is intentionally omitted on success —
+    // the page redirects away so we keep the loading state until Stripe loads.
   }
 
   return (
@@ -404,14 +345,13 @@ export default function CheckoutPage() {
               </div>
 
               <div className="px-6 pb-6 space-y-4">
-                {/* Stripe placeholder */}
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <div className="bg-stone-50 border border-stone-200 rounded-xl p-4">
                   <div className="flex items-start gap-2">
-                    <CreditCard className="w-4 h-4 text-amber-700 mt-0.5 flex-shrink-0" />
+                    <CreditCard className="w-4 h-4 text-stone-500 mt-0.5 flex-shrink-0" />
                     <div className="text-sm">
-                      <p className="font-medium text-amber-800">Payment</p>
-                      <p className="text-amber-700 mt-0.5">
-                        Wire in your Stripe publishable key to enable real card payments.
+                      <p className="font-medium text-stone-700">Secure payment via Stripe</p>
+                      <p className="text-stone-500 mt-0.5">
+                        You'll be redirected to Stripe to enter your card details.
                       </p>
                     </div>
                   </div>

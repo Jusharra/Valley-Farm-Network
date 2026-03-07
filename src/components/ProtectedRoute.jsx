@@ -17,20 +17,24 @@ function Spinner() {
 }
 
 export default function ProtectedRoute({ children, role }) {
-  const { session, profile, loading } = useAuth()
+  const { session, profile, loading, profileLoading } = useAuth()
 
-  console.log('ProtectedRoute check:', { loading, hasSession: !!session, hasProfile: !!profile, profileRole: profile?.role, requiredRole: role })
+  // Waiting for initial auth state
+  if (loading) return <Spinner />
 
-  // Still initializing, or session exists but profile hasn't arrived yet
-  // (brief window between navigate() and onAuthStateChange settling)
-  if (loading || (session && !profile)) return <Spinner />
-
+  // No session — send to sign in
   if (!session) return <Navigate to="/signin" replace />
 
-  // User is logged in but under the wrong role — send them to their actual dashboard
-  if (role && profile?.role !== role) {
-    console.log('Role mismatch, redirecting to:', ROLE_HOME[profile?.role])
-    return <Navigate to={ROLE_HOME[profile?.role] ?? '/'} replace />
+  // Profile still loading AND we have nothing cached — wait for role info.
+  // If we already have a profile (e.g. token refresh re-fetch), render immediately.
+  if (profileLoading && !profile) return <Spinner />
+
+  // Profile failed to load (timeout/error) — force re-auth
+  if (!profile) return <Navigate to="/signin" replace />
+
+  // Wrong role — redirect to their actual home
+  if (role && profile.role !== role) {
+    return <Navigate to={ROLE_HOME[profile.role] ?? '/'} replace />
   }
 
   return children

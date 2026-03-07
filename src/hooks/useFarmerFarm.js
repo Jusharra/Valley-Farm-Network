@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 
+// Maps plan slug → max active product listings (mirrors farm_plans.max_products in the DB)
+const PLAN_LIMITS = { listing: 10, seed: 20, growth: 40, pro: 60 }
+
 // Fetches + manages the current farmer's own farm, products, and addresses
 export function useFarmerFarm() {
   const [farm, setFarm]         = useState(undefined) // undefined = loading, null = no farm yet
@@ -10,7 +13,10 @@ export function useFarmerFarm() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
+    // getSession reads from localStorage — avoids a server round-trip that can hang on cold start.
+    // RLS on the farms table already scopes results to the authenticated user.
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user
     if (!user) { setLoading(false); return }
 
     const { data, error: err } = await supabase
@@ -106,5 +112,11 @@ export function useFarmerFarm() {
     setProducts(prev => prev.filter(p => p.id !== id))
   }
 
-  return { farm, products, loading, error, createFarm, updateFarm, addProduct, updateProduct, deleteProduct }
+  const activeProductCount = products.filter(p => p.is_active).length
+  // 0 = no plan (blocked), null = unlimited, number = capped
+  const productLimit = farm?.platform_plan_slug
+    ? (PLAN_LIMITS[farm.platform_plan_slug] ?? null)
+    : 0
+
+  return { farm, products, loading, error, activeProductCount, productLimit, createFarm, updateFarm, addProduct, updateProduct, deleteProduct }
 }

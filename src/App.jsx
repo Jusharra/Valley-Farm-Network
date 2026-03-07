@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import { Check, ShoppingBag } from 'lucide-react'
 import { AuthProvider } from './context/AuthContext'
 import { CartProvider, useCart } from './context/CartContext'
@@ -21,7 +21,7 @@ function NotificationToast() {
   const { notification } = useCart()
   if (!notification) return null
   return (
-    <div className="fixed top-6 right-6 z-50 bg-green-700 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-pulse">
+    <div className="fixed bottom-28 right-6 z-50 bg-green-700 text-white px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 max-w-xs">
       <Check className="w-5 h-5" />
       {notification}
     </div>
@@ -30,13 +30,14 @@ function NotificationToast() {
 
 function FloatingCartButton() {
   const { items, total } = useCart()
+  const navigate = useNavigate()
   const itemCount = items.reduce((sum, item) => sum + item.quantity, 0)
-  
+
   if (itemCount === 0) return null
-  
+
   return (
     <button
-      onClick={() => window.location.href = '/checkout'}
+      onClick={() => navigate('/checkout')}
       className="fixed bottom-6 right-6 bg-green-700 hover:bg-green-600 text-white p-4 rounded-full shadow-2xl transition-all hover:scale-105 z-40 flex items-center gap-3"
     >
       <ShoppingBag className="w-6 h-6" />
@@ -72,7 +73,7 @@ export default function App() {
 
             {/* Customer account */}
             <Route path="/account" element={
-              <ProtectedRoute>
+              <ProtectedRoute role="customer">
                 <AccountPage />
               </ProtectedRoute>
             } />

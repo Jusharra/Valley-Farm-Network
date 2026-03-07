@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Leaf, ShoppingBag, RefreshCw, MapPin, Plus, Trash2, Home, Check,
+  Leaf, ShoppingBag, RefreshCw, MapPin, Plus, Trash2, Home, Check, Settings,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { styles } from '../../lib/styles'
+import AccountSettings from '../../components/AccountSettings'
 
 // ── Status pill colours ─────────────────────────────────────────────────────
 const ORDER_STATUS = {
@@ -115,9 +116,10 @@ function AddressForm({ onSave, onCancel, saving }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 const TABS = [
-  { id: 'orders',        label: 'Order history', icon: ShoppingBag },
-  { id: 'subscriptions', label: 'Subscriptions',  icon: RefreshCw   },
-  { id: 'addresses',     label: 'Addresses',      icon: MapPin      },
+  { id: 'orders',        label: 'Order history',   icon: ShoppingBag },
+  { id: 'subscriptions', label: 'Subscriptions',   icon: RefreshCw   },
+  { id: 'addresses',     label: 'Addresses',        icon: MapPin      },
+  { id: 'account',       label: 'Account settings', icon: Settings    },
 ]
 
 export default function AccountPage() {
@@ -467,6 +469,9 @@ export default function AccountPage() {
             </div>
           )
         )}
+
+        {/* ── ACCOUNT SETTINGS ── */}
+        {activeTab === 'account' && <AccountSettings />}
 
       </div>
     </div>
