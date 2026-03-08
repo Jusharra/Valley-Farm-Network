@@ -16,6 +16,7 @@ import AccountPage      from './pages/customer/AccountPage'
 import CheckoutPage     from './pages/checkout/CheckoutPage'
 import CheckoutSuccessPage from './pages/checkout/CheckoutSuccessPage'
 import ResetPasswordPage from './pages/auth/ResetPasswordPage'
+import FarmerHelpPage   from './pages/help/FarmerHelpPage'
 
 function NotificationToast() {
   const { notification } = useCart()
@@ -61,6 +62,7 @@ export default function App() {
             <Route path="/"               element={<HomePage />} />
             <Route path="/farms/:slug"    element={<FarmPage />} />
             <Route path="/category/:slug" element={<CategoryPage />} />
+            <Route path="/help"           element={<FarmerHelpPage />} />
 
             {/* Checkout */}
             <Route path="/checkout"        element={<CheckoutPage />} />
