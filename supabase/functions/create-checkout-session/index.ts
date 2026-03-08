@@ -38,7 +38,8 @@ Deno.serve(async (req: Request) => {
     userId = user?.id ?? null
   }
 
-  const { items, fulfillment, address, notes, guestInfo } = await req.json()
+  const { items, fulfillment, address, notes, guestInfo, deliverySelections } = await req.json()
+  // deliverySelections: { [farmId]: { date, window, zoneId, fee } }
 
   // ── Group items by farm and fetch Stripe account status ──────────────────
   type FarmGroup = {
@@ -78,7 +79,8 @@ Deno.serve(async (req: Request) => {
   try {
     for (const g of groups) {
       const subtotal    = g.items.reduce((s: number, i: any) => s + i.product.price * i.quantity, 0)
-      const delivery    = fulfillment === 'delivery' ? DELIVERY_FEE : 0
+      const zoneSel     = deliverySelections?.[g.farmId]
+      const delivery    = fulfillment === 'delivery' ? (zoneSel?.fee ?? DELIVERY_FEE) : 0
       const tax         = (subtotal + delivery) * TAX_RATE
       const platformFee = 0
       const guestNote   = !userId && guestInfo
@@ -126,6 +128,9 @@ Deno.serve(async (req: Request) => {
           state:                   address.state,
           postal_code:             address.postal_code,
           delivery_notes:          notes ?? null,
+          scheduled_date:          zoneSel?.date   ?? null,
+          scheduled_window:        zoneSel?.window ?? null,
+          delivery_zone_id:        zoneSel?.zoneId ?? null,
         })
       }
 
@@ -153,10 +158,11 @@ Deno.serve(async (req: Request) => {
       })
     }
     if (fulfillment === 'delivery') {
+      const fee = deliverySelections?.[g.farmId]?.fee ?? DELIVERY_FEE
       lineItems.push({
         price_data: {
           currency:     'usd',
-          unit_amount:  Math.round(DELIVERY_FEE * 100),
+          unit_amount:  Math.round(fee * 100),
           product_data: { name: `Delivery — ${g.farmName}` },
         },
         quantity: 1,

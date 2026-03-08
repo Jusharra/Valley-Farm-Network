@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import {
   LayoutDashboard, Store, Package, ShoppingBag, CreditCard,
   LogOut, Plus, Edit2, Trash2, X, Check, Leaf, AlertCircle, Camera, Link, Share2, Mail, Users, Settings,
+  Truck, MapPin, Calendar, ChevronDown, ChevronUp, Route,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import AccountSettings from '../../components/AccountSettings'
@@ -15,25 +16,29 @@ import { supabase } from '../../lib/supabase'
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_COLORS = {
-  pending:          'bg-amber-100 text-amber-700',
-  confirmed:        'bg-blue-100 text-blue-700',
+  pending_payment:  'bg-stone-100 text-stone-500',
+  pending:          'bg-stone-100 text-stone-500',
+  paid:             'bg-blue-100 text-blue-700',
+  processing:       'bg-amber-100 text-amber-700',
   out_for_delivery: 'bg-purple-100 text-purple-700',
-  delivered:        'bg-green-100 text-green-700',
+  completed:        'bg-green-100 text-green-700',
   cancelled:        'bg-red-100 text-red-700',
 }
 
 const STATUS_LABELS = {
-  pending:          'Pending',
-  confirmed:        'Confirmed',
+  pending_payment:  'New',
+  pending:          'New',
+  paid:             'Paid',
+  processing:       'Preparing',
   out_for_delivery: 'Out for Delivery',
-  delivered:        'Delivered',
+  completed:        'Delivered',
   cancelled:        'Cancelled',
 }
 
 const NEXT_STATUS = {
-  pending:          'confirmed',
-  confirmed:        'out_for_delivery',
-  out_for_delivery: 'delivered',
+  paid:             'processing',
+  processing:       'out_for_delivery',
+  out_for_delivery: 'completed',
 }
 
 const UNIT_PRESETS = ['each', 'dozen', 'lb', 'oz', 'bunch', 'bag', 'box', 'jar', 'pint', 'quart', 'gallon']
@@ -72,7 +77,9 @@ function Toast({ msg }) {
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 
-const VALID_TABS = new Set(['overview', 'profile', 'products', 'orders', 'subscribers', 'subscription', 'account'])
+const VALID_TABS = new Set(['overview', 'profile', 'products', 'orders', 'delivery', 'subscribers', 'subscription', 'account'])
+const DELIVERY_PLAN_SLUGS = ['seed', 'growth', 'pro']
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
 export default function FarmerDashboard() {
   const { profile, session, signOut } = useAuth()
@@ -451,6 +458,9 @@ export default function FarmerDashboard() {
     { id: 'farm',         label: 'Farm Profile', Icon: Store },
     { id: 'products',     label: 'Products',     Icon: Package,     badge: activeProducts.length },
     { id: 'orders',       label: 'Orders',       Icon: ShoppingBag, badge: pendingCount || null },
+    ...(DELIVERY_PLAN_SLUGS.includes(farm.platform_plan_slug)
+      ? [{ id: 'delivery', label: 'Delivery', Icon: Truck }]
+      : []),
     { id: 'subscribers',  label: 'Subscribers',  Icon: Users },
     { id: 'subscription', label: 'Billing',      Icon: CreditCard },
     { id: 'account',      label: 'Account',      Icon: Settings },
@@ -554,6 +564,9 @@ export default function FarmerDashboard() {
             loading={ordersLoading}
             onUpdateStatus={updateOrderStatus}
           />
+        )}
+        {tab === 'delivery' && (
+          <DeliverySection farm={farm} updateFarm={updateFarm} notify={notify} orders={orders} />
         )}
         {tab === 'subscribers' && (
           <SubscribersSection subscribers={subscribers} />
@@ -1233,6 +1246,380 @@ function ProductsSection({ products, productLimit, activeProductCount, onAdd, on
   )
 }
 
+// ─── Delivery Section ─────────────────────────────────────────────────────────
+
+function DeliverySection({ farm, updateFarm, notify, orders }) {
+  const [subTab, setSubTab] = useState('zones')
+
+  // ── Zones state ──
+  const [zones, setZones]       = useState([])
+  const [zonesLoading, setZonesLoading] = useState(true)
+  const [zoneForm, setZoneForm] = useState({ postal_code: '', delivery_fee: '', minimum_order_amount: '' })
+  const [addingZone, setAddingZone] = useState(false)
+
+  // ── Schedule state ──
+  const [schedules, setSchedules]         = useState([])
+  const [schedulesLoading, setSchedulesLoading] = useState(true)
+  const [schedForm, setSchedForm]         = useState({ day_of_week: '1', time_window: '' })
+  const [addingSched, setAddingSched]     = useState(false)
+
+  // ── Routes state ──
+  const [routeOrders, setRouteOrders]     = useState([])
+  const [routesLoading, setRoutesLoading] = useState(true)
+  const [expanded, setExpanded]           = useState({}) // { 'date|zip': bool }
+  const [jobForms, setJobForms]           = useState({}) // { 'date': fee }
+  const [postingJob, setPostingJob]       = useState(null)
+
+  useEffect(() => {
+    if (!farm?.id) return
+    supabase.from('delivery_zones').select('*').eq('farm_id', farm.id).order('postal_code')
+      .then(({ data }) => setZones(data ?? []))
+      .finally(() => setZonesLoading(false))
+    supabase.from('delivery_schedules').select('*').eq('farm_id', farm.id).order('day_of_week')
+      .then(({ data }) => setSchedules(data ?? []))
+      .finally(() => setSchedulesLoading(false))
+    supabase.from('orders')
+      .select('id, status, total_amount, created_at, profiles(full_name), order_items(quantity, products(name)), deliveries(id, scheduled_date, scheduled_window, postal_code, delivery_status, delivery_jobs(id, status, driver_fee, driver_id, drivers(profiles(full_name))))')
+      .eq('farm_id', farm.id)
+      .in('status', ['paid', 'processing', 'out_for_delivery', 'completed'])
+      .not('deliveries', 'is', null)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => setRouteOrders((data ?? []).filter(o => o.deliveries?.length > 0 && o.deliveries[0].scheduled_date)))
+      .finally(() => setRoutesLoading(false))
+  }, [farm?.id])
+
+  // ── Zone CRUD ──
+  async function addZone() {
+    if (!zoneForm.postal_code.trim()) return
+    setAddingZone(true)
+    const { data, error } = await supabase.from('delivery_zones').insert({
+      farm_id: farm.id,
+      zone_name: zoneForm.postal_code.trim(),
+      postal_code: zoneForm.postal_code.trim(),
+      delivery_fee: parseFloat(zoneForm.delivery_fee) || 0,
+      minimum_order_amount: parseFloat(zoneForm.minimum_order_amount) || 0,
+    }).select().single()
+    if (error) { notify('error', error.message) }
+    else { setZones(z => [...z, data]); setZoneForm({ postal_code: '', delivery_fee: '', minimum_order_amount: '' }) }
+    setAddingZone(false)
+  }
+
+  async function deleteZone(id) {
+    setZones(z => z.filter(x => x.id !== id))
+    const { error } = await supabase.from('delivery_zones').delete().eq('id', id)
+    if (error) { notify('error', error.message); supabase.from('delivery_zones').select('*').eq('farm_id', farm.id).then(({ data }) => setZones(data ?? [])) }
+  }
+
+  // ── Schedule CRUD ──
+  async function addSchedule() {
+    if (!schedForm.time_window.trim()) return
+    setAddingSched(true)
+    const { data, error } = await supabase.from('delivery_schedules').insert({
+      farm_id: farm.id,
+      day_of_week: parseInt(schedForm.day_of_week),
+      time_window: schedForm.time_window.trim(),
+    }).select().single()
+    if (error) { notify('error', error.message) }
+    else { setSchedules(s => [...s, data].sort((a, b) => a.day_of_week - b.day_of_week)); setSchedForm({ day_of_week: '1', time_window: '' }) }
+    setAddingSched(false)
+  }
+
+  async function deleteSchedule(id) {
+    setSchedules(s => s.filter(x => x.id !== id))
+    await supabase.from('delivery_schedules').delete().eq('id', id)
+  }
+
+  // ── Route status update ──
+  async function updateRouteOrderStatus(orderId, newStatus) {
+    setRouteOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o))
+    const { error } = await supabase.from('orders').update({ status: newStatus }).eq('id', orderId)
+    if (error) { notify('error', error.message); supabase.from('orders').select('id,status').eq('id', orderId).single().then(({ data }) => { if (data) setRouteOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: data.status } : o)) }) }
+  }
+
+  // ── Post delivery job (Network Pro) ──
+  async function postDeliveryJob(deliveryId, dateKey) {
+    const fee = parseFloat(jobForms[dateKey])
+    if (!fee || fee <= 0) { notify('error', 'Enter a valid driver fee'); return }
+    setPostingJob(dateKey)
+    const { error } = await supabase.from('delivery_jobs').insert({ delivery_id: deliveryId, farm_id: farm.id, driver_fee: fee })
+    if (error) { notify('error', error.message) }
+    else {
+      notify('success', 'Driver job posted')
+      // Refresh route orders
+      const { data } = await supabase.from('orders')
+        .select('id, status, total_amount, created_at, profiles(full_name), order_items(quantity, products(name)), deliveries(id, scheduled_date, scheduled_window, postal_code, delivery_status, delivery_jobs(id, status, driver_fee, driver_id, drivers(profiles(full_name))))')
+        .eq('farm_id', farm.id)
+        .in('status', ['paid', 'processing', 'out_for_delivery', 'completed'])
+        .not('deliveries', 'is', null)
+        .order('created_at', { ascending: false })
+      setRouteOrders((data ?? []).filter(o => o.deliveries?.length > 0 && o.deliveries[0].scheduled_date))
+    }
+    setPostingJob(null)
+  }
+
+  // ── Grouped routes ──
+  const grouped = routeOrders.reduce((acc, order) => {
+    const d = order.deliveries[0]
+    const dateKey = d.scheduled_date
+    const zipKey  = d.postal_code ?? 'Unknown'
+    if (!acc[dateKey]) acc[dateKey] = {}
+    if (!acc[dateKey][zipKey]) acc[dateKey][zipKey] = []
+    acc[dateKey][zipKey].push(order)
+    return acc
+  }, {})
+  const sortedDates = Object.keys(grouped).sort()
+
+  const SUB_TABS = [
+    { id: 'zones',    label: 'Zones',    Icon: MapPin },
+    { id: 'schedule', label: 'Schedule', Icon: Calendar },
+    { id: 'routes',   label: 'Routes',   Icon: Route },
+  ]
+
+  return (
+    <div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-stone-800">Delivery</h1>
+        <p className="text-stone-500 mt-1">Manage your delivery zones, schedule, and route dashboard.</p>
+      </div>
+
+      {/* Sub-tab nav */}
+      <div className="flex gap-2 mb-7">
+        {SUB_TABS.map(({ id, label, Icon }) => (
+          <button key={id} onClick={() => setSubTab(id)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+              subTab === id ? 'bg-green-700 text-white' : 'bg-white border border-stone-200 text-stone-600 hover:border-stone-300'
+            }`}>
+            <Icon className="w-4 h-4" />{label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── ZONES ── */}
+      {subTab === 'zones' && (
+        <div className="space-y-5">
+          {/* Toggle offers_delivery */}
+          <div className="bg-white rounded-2xl border border-stone-200/50 p-5 flex items-center justify-between gap-4">
+            <div>
+              <p className="font-semibold text-stone-800">Delivery enabled</p>
+              <p className="text-sm text-stone-500 mt-0.5">Show delivery option to customers at checkout</p>
+            </div>
+            <button
+              onClick={() => updateFarm({ offers_delivery: !farm.offers_delivery })}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${farm.offers_delivery ? 'bg-green-600' : 'bg-stone-300'}`}
+            >
+              <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${farm.offers_delivery ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
+
+          {/* Zone list */}
+          <div className="bg-white rounded-2xl border border-stone-200/50 overflow-hidden">
+            <div className="px-5 py-3 border-b border-stone-100 flex items-center justify-between">
+              <p className="font-semibold text-stone-800">Delivery zones</p>
+              <p className="text-xs text-stone-400">{zones.length} zip code{zones.length !== 1 ? 's' : ''}</p>
+            </div>
+            {zonesLoading ? (
+              <div className="p-5 space-y-3">{[0,1,2].map(i => <div key={i} className="h-10 bg-stone-100 rounded-xl animate-pulse" />)}</div>
+            ) : zones.length === 0 ? (
+              <div className="py-10 text-center text-stone-400"><MapPin className="w-8 h-8 mx-auto mb-2 opacity-30" /><p className="text-sm">No zones yet. Add a zip code below.</p></div>
+            ) : (
+              <div className="divide-y divide-stone-100">
+                {zones.map(z => (
+                  <div key={z.id} className="px-5 py-3.5 flex items-center gap-3">
+                    <MapPin className="w-4 h-4 text-stone-400 shrink-0" />
+                    <div className="flex-1">
+                      <span className="font-medium text-stone-800">{z.postal_code}</span>
+                      <span className="text-stone-400 text-sm ml-3">Fee: ${Number(z.delivery_fee).toFixed(2)}</span>
+                      {z.minimum_order_amount > 0 && <span className="text-stone-400 text-sm ml-2">· Min: ${Number(z.minimum_order_amount).toFixed(2)}</span>}
+                    </div>
+                    <button onClick={() => deleteZone(z.id)} className="text-stone-300 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Add zone form */}
+          <div className="bg-white rounded-2xl border border-stone-200/50 p-5">
+            <p className="font-semibold text-stone-800 mb-3">Add zip code</p>
+            <div className="flex gap-3 flex-wrap">
+              <input type="text" placeholder="ZIP code (e.g. 93312)" value={zoneForm.postal_code}
+                onChange={e => setZoneForm(f => ({ ...f, postal_code: e.target.value }))}
+                className={`${styles.input} w-40`} />
+              <input type="number" placeholder="Delivery fee ($)" value={zoneForm.delivery_fee}
+                onChange={e => setZoneForm(f => ({ ...f, delivery_fee: e.target.value }))}
+                className={`${styles.input} w-40`} min="0" step="0.01" />
+              <input type="number" placeholder="Min order ($)" value={zoneForm.minimum_order_amount}
+                onChange={e => setZoneForm(f => ({ ...f, minimum_order_amount: e.target.value }))}
+                className={`${styles.input} w-36`} min="0" step="0.01" />
+              <button onClick={addZone} disabled={addingZone || !zoneForm.postal_code.trim()}
+                className="bg-green-700 hover:bg-green-800 text-white px-4 py-2.5 rounded-xl font-medium text-sm transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                <Plus className="w-4 h-4" />{addingZone ? 'Adding…' : 'Add'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── SCHEDULE ── */}
+      {subTab === 'schedule' && (
+        <div className="space-y-5">
+          <div className="bg-white rounded-2xl border border-stone-200/50 overflow-hidden">
+            <div className="px-5 py-3 border-b border-stone-100">
+              <p className="font-semibold text-stone-800">Delivery days</p>
+              <p className="text-sm text-stone-400 mt-0.5">Customers choose from these days at checkout</p>
+            </div>
+            {schedulesLoading ? (
+              <div className="p-5 space-y-3">{[0,1].map(i => <div key={i} className="h-10 bg-stone-100 rounded-xl animate-pulse" />)}</div>
+            ) : schedules.length === 0 ? (
+              <div className="py-10 text-center text-stone-400"><Calendar className="w-8 h-8 mx-auto mb-2 opacity-30" /><p className="text-sm">No schedule yet. Add a delivery day below.</p></div>
+            ) : (
+              <div className="divide-y divide-stone-100">
+                {schedules.map(s => (
+                  <div key={s.id} className="px-5 py-3.5 flex items-center gap-3">
+                    <Calendar className="w-4 h-4 text-stone-400 shrink-0" />
+                    <div className="flex-1">
+                      <span className="font-medium text-stone-800">{DAY_NAMES[s.day_of_week]}</span>
+                      <span className="text-stone-400 text-sm ml-3">{s.time_window}</span>
+                    </div>
+                    <button onClick={() => deleteSchedule(s.id)} className="text-stone-300 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Add schedule form */}
+          <div className="bg-white rounded-2xl border border-stone-200/50 p-5">
+            <p className="font-semibold text-stone-800 mb-3">Add delivery day</p>
+            <div className="flex gap-3 flex-wrap">
+              <select value={schedForm.day_of_week} onChange={e => setSchedForm(f => ({ ...f, day_of_week: e.target.value }))} className={`${styles.input} w-40`}>
+                {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+              </select>
+              <input type="text" placeholder="Time window (e.g. 9am–12pm)" value={schedForm.time_window}
+                onChange={e => setSchedForm(f => ({ ...f, time_window: e.target.value }))}
+                className={`${styles.input} flex-1 min-w-48`} />
+              <button onClick={addSchedule} disabled={addingSched || !schedForm.time_window.trim()}
+                className="bg-green-700 hover:bg-green-800 text-white px-4 py-2.5 rounded-xl font-medium text-sm transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                <Plus className="w-4 h-4" />{addingSched ? 'Adding…' : 'Add'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ROUTES ── */}
+      {subTab === 'routes' && (
+        <div>
+          {routesLoading ? (
+            <div className="space-y-4">{[0,1].map(i => <div key={i} className="h-24 bg-stone-200 rounded-2xl animate-pulse" />)}</div>
+          ) : sortedDates.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-stone-200/50 py-16 text-center">
+              <Route className="w-12 h-12 mx-auto mb-3 text-stone-200" />
+              <p className="text-stone-400 font-medium">No scheduled delivery routes</p>
+              <p className="text-stone-400 text-sm mt-1">Orders with a scheduled delivery date will appear here.</p>
+            </div>
+          ) : sortedDates.map(dateKey => {
+            const dateLabel = new Date(dateKey + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
+            const zipGroups = grouped[dateKey]
+            const allDeliveryIds = Object.values(zipGroups).flat().map(o => o.deliveries[0].id)
+            // Use first delivery for the job association
+            const firstDelivery = Object.values(zipGroups).flat()[0]?.deliveries[0]
+            const existingJob   = firstDelivery?.delivery_jobs?.[0]
+
+            return (
+              <div key={dateKey} className="mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-bold text-stone-700 text-lg">{dateLabel}</h3>
+                  {/* Network Pro: driver job panel */}
+                  {farm.platform_plan_slug === 'pro' && (
+                    <div className="flex items-center gap-2">
+                      {existingJob ? (
+                        <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${existingJob.status === 'accepted' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {existingJob.status === 'accepted'
+                            ? `Driver: ${existingJob.drivers?.profiles?.full_name ?? 'Accepted'}`
+                            : `Job posted · $${Number(existingJob.driver_fee).toFixed(2)}`}
+                        </span>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <input type="number" placeholder="Driver fee $" min="0" step="1"
+                            value={jobForms[dateKey] ?? ''}
+                            onChange={e => setJobForms(f => ({ ...f, [dateKey]: e.target.value }))}
+                            className="w-32 px-3 py-1.5 border border-stone-200 rounded-xl text-sm" />
+                          <button
+                            onClick={() => postDeliveryJob(firstDelivery?.id, dateKey)}
+                            disabled={postingJob === dateKey}
+                            className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition-colors disabled:opacity-50">
+                            {postingJob === dateKey ? 'Posting…' : 'Post Driver Job'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {Object.entries(zipGroups).map(([zip, zipOrders]) => {
+                  const groupKey = `${dateKey}|${zip}`
+                  const isExpanded = expanded[groupKey] ?? false
+                  return (
+                    <div key={zip} className="bg-white rounded-2xl border border-stone-200/50 mb-3 overflow-hidden">
+                      <button
+                        onClick={() => setExpanded(e => ({ ...e, [groupKey]: !isExpanded }))}
+                        className="w-full px-5 py-3.5 flex items-center gap-3 hover:bg-stone-50 transition-colors text-left"
+                      >
+                        <MapPin className="w-4 h-4 text-stone-400 shrink-0" />
+                        <div className="flex-1">
+                          <span className="font-semibold text-stone-800">ZIP {zip}</span>
+                          <span className="text-stone-400 text-sm ml-2">— {zipOrders.length} order{zipOrders.length !== 1 ? 's' : ''}</span>
+                        </div>
+                        {isExpanded ? <ChevronUp className="w-4 h-4 text-stone-400" /> : <ChevronDown className="w-4 h-4 text-stone-400" />}
+                      </button>
+
+                      {isExpanded && (
+                        <div className="divide-y divide-stone-100">
+                          {zipOrders.map(order => {
+                            const delivery = order.deliveries[0]
+                            const next = NEXT_STATUS[order.status]
+                            const itemSummary = order.order_items?.map(i => `${i.quantity}× ${i.products?.name ?? 'item'}`).join(', ')
+                            return (
+                              <div key={order.id} className="px-5 py-4 flex items-start justify-between gap-4">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <p className="font-semibold text-stone-800">{order.profiles?.full_name ?? 'Guest'}</p>
+                                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[order.status] ?? 'bg-stone-100 text-stone-500'}`}>
+                                      {STATUS_LABELS[order.status] ?? order.status}
+                                    </span>
+                                  </div>
+                                  <p className="text-sm text-stone-500 truncate">{itemSummary}</p>
+                                  {delivery.scheduled_window && <p className="text-xs text-stone-400 mt-0.5">{delivery.scheduled_window}</p>}
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className="font-bold text-stone-800 mb-1.5">${Number(order.total_amount).toFixed(2)}</p>
+                                  {next && (
+                                    <button
+                                      onClick={() => updateRouteOrderStatus(order.id, next)}
+                                      className="text-xs bg-green-50 text-green-700 border border-green-200 px-3 py-1.5 rounded-full font-medium hover:bg-green-100 transition-all whitespace-nowrap">
+                                      Mark {STATUS_LABELS[next]}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+
 // ─── Orders Section ───────────────────────────────────────────────────────────
 
 const SUB_STATUS_COLORS = {
@@ -1246,8 +1633,15 @@ const SUB_STATUS_COLORS = {
 
 function OrdersSection({ orders, subscriptions = [], loading, onUpdateStatus }) {
   const [filter, setFilter] = useState('all')
-  const visible = filter === 'all' ? orders : orders.filter(o => o.status === filter)
-  const STATUSES = ['all', 'pending', 'confirmed', 'out_for_delivery', 'delivered', 'cancelled']
+  // 'new' filter covers both pending_payment and pending
+  const visible = filter === 'all' ? orders
+    : filter === 'new' ? orders.filter(o => o.status === 'pending_payment' || o.status === 'pending')
+    : orders.filter(o => o.status === filter)
+  const STATUSES = ['all', 'new', 'paid', 'processing', 'out_for_delivery', 'completed', 'cancelled']
+  const STATUS_FILTER_LABELS = { new: 'New', paid: 'Paid', processing: 'Preparing', out_for_delivery: 'Out for Delivery', completed: 'Delivered', cancelled: 'Cancelled' }
+  const statusCount = s => s === 'new'
+    ? orders.filter(o => o.status === 'pending_payment' || o.status === 'pending').length
+    : orders.filter(o => o.status === s).length
 
   return (
     <div>
@@ -1267,9 +1661,9 @@ function OrdersSection({ orders, subscriptions = [], loading, onUpdateStatus }) 
                 : 'bg-white text-stone-500 border border-stone-200 hover:border-stone-300'
             }`}
           >
-            {s === 'all' ? 'All' : STATUS_LABELS[s]}
+            {s === 'all' ? 'All' : STATUS_FILTER_LABELS[s]}
             {s !== 'all' && (
-              <span className="ml-1.5 opacity-60">({orders.filter(o => o.status === s).length})</span>
+              <span className="ml-1.5 opacity-60">({statusCount(s)})</span>
             )}
           </button>
         ))}

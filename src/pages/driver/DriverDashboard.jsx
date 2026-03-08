@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   Leaf, Truck, MapPin, Package, CheckCircle2, XCircle, Camera,
   Clock, AlertCircle, Plus, Trash2, ChevronDown, ChevronUp, Navigation, Settings,
+  Briefcase, CreditCard,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
@@ -325,8 +325,7 @@ function DeliveryCard({ delivery, onUpdateStatus, onUploadPhoto }) {
 }
 
 // ── Active driver dashboard ───────────────────────────────────────────────────
-function ActiveDashboard({ driver, profile, signOut }) {
-  const navigate = useNavigate()
+function ActiveDashboard({ driver, setDriver, profile, signOut }) {
   const [activeTab, setActiveTab] = useState('deliveries')
 
   // Deliveries
@@ -334,11 +333,20 @@ function ActiveDashboard({ driver, profile, signOut }) {
   const [deliveriesLoading, setDeliveriesLoading] = useState(true)
   const [filter, setFilter]             = useState('active')
 
+  // Available jobs (driver network)
+  const [openJobs, setOpenJobs]         = useState([])
+  const [jobsLoading, setJobsLoading]   = useState(false)
+  const [acceptingJob, setAcceptingJob] = useState(null)
+  const [jobToast, setJobToast]         = useState(null)
+
   // Service areas
   const [areas, setAreas]               = useState([])
   const [areasLoading, setAreasLoading] = useState(false)
   const [newArea, setNewArea]           = useState({ city: '', postal_code: '' })
   const [addingArea, setAddingArea]     = useState(false)
+
+  // Stripe Connect
+  const [connectLoading, setConnectLoading] = useState(false)
 
   useEffect(() => {
     setDeliveriesLoading(true)
@@ -371,13 +379,40 @@ function ActiveDashboard({ driver, profile, signOut }) {
       .finally(() => setAreasLoading(false))
   }, [activeTab, driver.id])
 
+  useEffect(() => {
+    if (activeTab !== 'jobs') return
+    setJobsLoading(true)
+    // Fetch driver's service area zip codes, then load matching open jobs
+    supabase.from('driver_service_areas').select('postal_code').eq('driver_id', driver.id)
+      .then(async ({ data: areaRows }) => {
+        const zips = (areaRows ?? []).map(a => a.postal_code).filter(Boolean)
+        const { data: jobs } = await supabase
+          .from('delivery_jobs')
+          .select('id, driver_fee, status, deliveries(scheduled_date, scheduled_window, postal_code), farms(farm_name)')
+          .eq('status', 'open')
+        // Filter client-side by matching postal codes
+        const matched = (jobs ?? []).filter(j => !zips.length || zips.includes(j.deliveries?.postal_code))
+        setOpenJobs(matched)
+      })
+      .finally(() => setJobsLoading(false))
+  }, [activeTab, driver.id])
+
   // ── Mutations ──
   async function updateStatus(delivery, newStatus) {
+    if (newStatus === 'delivered') {
+      // Call edge function so driver gets paid
+      const { error } = await supabase.functions.invoke('complete-delivery', {
+        body: { deliveryId: delivery.id },
+      })
+      if (error) { alert(`Error: ${error.message}`); return }
+      setDeliveries(prev => prev.map(d => d.id === delivery.id
+        ? { ...d, delivery_status: 'delivered', delivered_at: new Date().toISOString() } : d))
+      return
+    }
     const updates = { delivery_status: newStatus }
-    if (newStatus === 'delivered') updates.delivered_at = new Date().toISOString()
     setDeliveries(prev => prev.map(d => d.id === delivery.id ? { ...d, ...updates } : d))
     const { error } = await supabase.from('deliveries').update(updates).eq('id', delivery.id)
-    if (error) setDeliveries(prev => prev.map(d => d.id === delivery.id ? { ...d, delivery_status: delivery.delivery_status, delivered_at: delivery.delivered_at } : d))
+    if (error) setDeliveries(prev => prev.map(d => d.id === delivery.id ? { ...d, delivery_status: delivery.delivery_status } : d))
   }
 
   async function uploadPhoto(delivery, file) {
@@ -409,6 +444,35 @@ function ActiveDashboard({ driver, profile, signOut }) {
     await supabase.from('driver_service_areas').delete().eq('id', id)
   }
 
+  async function acceptJob(job) {
+    setAcceptingJob(job.id)
+    try {
+      await supabase.rpc('accept_delivery_job', { p_job_id: job.id, p_driver_id: driver.id })
+      setOpenJobs(prev => prev.filter(j => j.id !== job.id))
+      setJobToast({ type: 'success', msg: 'Job accepted! Check My Deliveries.' })
+    } catch (err) {
+      const msg = err?.message?.includes('job_already_taken')
+        ? 'This job was just taken — try another.'
+        : `Error: ${err?.message}`
+      setJobToast({ type: 'error', msg })
+    } finally {
+      setAcceptingJob(null)
+      setTimeout(() => setJobToast(null), 4000)
+    }
+  }
+
+  async function connectStripe() {
+    setConnectLoading(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('create-driver-connect-link')
+      if (error || !data?.url) throw new Error(error?.message ?? 'No URL returned')
+      window.location.href = data.url
+    } catch (err) {
+      alert(`Stripe Connect error: ${err.message}`)
+      setConnectLoading(false)
+    }
+  }
+
   const activeDeliveries    = deliveries.filter(d => d.delivery_status === 'assigned' || d.delivery_status === 'picked_up')
   const completedDeliveries = deliveries.filter(d => d.delivery_status === 'delivered' || d.delivery_status === 'failed')
   const shown = filter === 'active' ? activeDeliveries : completedDeliveries
@@ -429,9 +493,10 @@ function ActiveDashboard({ driver, profile, signOut }) {
 
         <nav className="space-y-1 flex-1">
           {[
-            { id: 'deliveries', label: 'My Deliveries', icon: Truck,      badge: activeDeliveries.length || null },
-            { id: 'areas',      label: 'Service Areas',  icon: Navigation, badge: null },
-            { id: 'account',    label: 'Account',        icon: Settings,   badge: null },
+            { id: 'deliveries', label: 'My Deliveries',   icon: Truck,      badge: activeDeliveries.length || null },
+            { id: 'jobs',       label: 'Available Jobs',  icon: Briefcase,  badge: openJobs.length || null },
+            { id: 'areas',      label: 'Service Areas',   icon: Navigation, badge: null },
+            { id: 'account',    label: 'Account',         icon: Settings,   badge: null },
           ].map(item => (
             <button
               key={item.id}
@@ -465,13 +530,37 @@ function ActiveDashboard({ driver, profile, signOut }) {
       {/* Main */}
       <div className="ml-64 p-8">
         <div className="max-w-3xl">
+
+          {/* ── Stripe Connect banner ── */}
+          {!driver.stripe_connect_enabled && (
+            <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4 flex items-center gap-4">
+              <CreditCard className="w-6 h-6 text-amber-600 shrink-0" />
+              <div className="flex-1">
+                <p className="font-semibold text-amber-800 text-sm">Connect Stripe to receive delivery payment payouts</p>
+                <p className="text-amber-600 text-xs mt-0.5">Set up your Stripe account so earnings are transferred automatically when you mark deliveries complete.</p>
+              </div>
+              <button
+                onClick={connectStripe}
+                disabled={connectLoading}
+                className="shrink-0 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors disabled:opacity-60"
+              >
+                {connectLoading ? 'Redirecting…' : 'Connect Stripe'}
+              </button>
+            </div>
+          )}
+
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-stone-800">
-              {activeTab === 'deliveries' ? 'My Deliveries' : activeTab === 'areas' ? 'Service Areas' : 'Account Settings'}
+              {activeTab === 'deliveries' ? 'My Deliveries'
+                : activeTab === 'jobs'  ? 'Available Jobs'
+                : activeTab === 'areas' ? 'Service Areas'
+                : 'Account Settings'}
             </h1>
             <p className="text-stone-500">
               {activeTab === 'deliveries'
                 ? `${activeDeliveries.length} active · ${completedDeliveries.length} completed`
+                : activeTab === 'jobs'
+                ? 'Open delivery jobs in your service areas — first to accept wins'
                 : activeTab === 'areas'
                 ? 'Manage the cities and ZIP codes you deliver to'
                 : 'Update your profile, email and password'}
@@ -534,6 +623,76 @@ function ActiveDashboard({ driver, profile, signOut }) {
                 </div>
               )}
             </>
+          )}
+
+          {/* ── AVAILABLE JOBS ── */}
+          {activeTab === 'jobs' && (
+            <div className="space-y-4">
+              {jobToast && (
+                <div className={`px-4 py-3 rounded-xl text-sm font-medium ${
+                  jobToast.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
+                }`}>
+                  {jobToast.msg}
+                </div>
+              )}
+
+              {jobsLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="bg-white rounded-2xl border border-stone-200 p-5 animate-pulse flex gap-4">
+                      <div className="w-10 h-10 bg-stone-100 rounded-xl shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-4 bg-stone-200 rounded w-1/3" />
+                        <div className="h-3 bg-stone-100 rounded w-1/2" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : openJobs.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-stone-200 py-16 text-center">
+                  <Briefcase className="w-12 h-12 text-stone-300 mx-auto mb-4" />
+                  <p className="font-semibold text-stone-600 mb-1">No open jobs right now</p>
+                  <p className="text-stone-400 text-sm">Jobs matching your service areas will appear here when farmers post them.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {openJobs.map(job => (
+                    <div key={job.id} className="bg-white rounded-2xl border border-stone-200 p-5 flex items-center gap-4">
+                      <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
+                        <Briefcase className="w-5 h-5 text-blue-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-stone-800">{job.farms?.farm_name ?? '—'}</p>
+                        <div className="flex items-center gap-3 mt-0.5 text-sm text-stone-500">
+                          {job.deliveries?.scheduled_date && (
+                            <span>{job.deliveries.scheduled_date}</span>
+                          )}
+                          {job.deliveries?.scheduled_window && (
+                            <span>{job.deliveries.scheduled_window}</span>
+                          )}
+                          {job.deliveries?.postal_code && (
+                            <span className="flex items-center gap-1">
+                              <MapPin className="w-3 h-3" />
+                              {job.deliveries.postal_code}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-lg font-bold text-green-700">${Number(job.driver_fee).toFixed(2)}</p>
+                        <button
+                          onClick={() => acceptJob(job)}
+                          disabled={acceptingJob === job.id}
+                          className="mt-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors disabled:opacity-60"
+                        >
+                          {acceptingJob === job.id ? 'Accepting…' : 'Accept Job'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
 
           {/* ── SERVICE AREAS ── */}
@@ -658,5 +817,5 @@ export default function DriverDashboard() {
   }
 
   // Fully approved and active
-  return <ActiveDashboard driver={driver} profile={profile} signOut={signOut} />
+  return <ActiveDashboard driver={driver} setDriver={setDriver} profile={profile} signOut={signOut} />
 }

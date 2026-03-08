@@ -12,7 +12,7 @@ export function useOrders(farmId) {
     Promise.all([
       supabase
         .from('orders')
-        .select('*, order_items(*, products(name, unit_name)), profiles(full_name)')
+        .select('*, order_items(*, products(name, unit_name)), profiles(full_name), deliveries(id, scheduled_date, scheduled_window, postal_code, delivery_status)')
         .eq('farm_id', farmId)
         .order('created_at', { ascending: false })
         .limit(50),

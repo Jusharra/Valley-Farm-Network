@@ -1,15 +1,17 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import {
   ShoppingBag, Plus, Minus, Leaf, Truck, Store,
-  User, ArrowLeft, CreditCard, Check, AlertCircle,
+  User, ArrowLeft, CreditCard, Check, AlertCircle, Calendar,
 } from 'lucide-react'
 import { useCart } from '../../context/CartContext'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 
-const TAX_RATE    = 0.0825
-const DELIVERY_FEE = 5.00
+const TAX_RATE     = 0.0825
+const DELIVERY_FEE = 5.00 // fallback if no zone found
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
 function Field({ label, required, children }) {
   return (
@@ -24,6 +26,26 @@ function Field({ label, required, children }) {
 
 const inputCls = 'w-full px-4 py-2.5 rounded-xl border border-stone-200 focus:border-green-500 focus:ring-2 focus:ring-green-100 outline-none'
 
+// Generate next 14 days that match the farm's delivery schedule
+function getAvailableDates(schedules) {
+  const dates = []
+  const today = new Date()
+  for (let i = 1; i <= 14; i++) {
+    const d = new Date(today)
+    d.setDate(today.getDate() + i)
+    const dow = d.getDay()
+    const match = schedules.find(s => s.day_of_week === dow)
+    if (match) {
+      dates.push({
+        date: d.toISOString().split('T')[0],
+        window: match.time_window,
+        label: `${DAY_NAMES[dow]}, ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+      })
+    }
+  }
+  return dates
+}
+
 export default function CheckoutPage() {
   const navigate = useNavigate()
   const { items, updateQuantity, removeFromCart } = useCart()
@@ -36,6 +58,11 @@ export default function CheckoutPage() {
   const [loading, setLoading]         = useState(false)
   const [error, setError]             = useState('')
 
+  // Delivery zone + schedule state per farm
+  const [zoneData, setZoneData]             = useState({}) // { [farmId]: zone | null | 'loading' }
+  const [scheduleData, setScheduleData]     = useState({}) // { [farmId]: schedule[] }
+  const [deliverySelections, setDeliverySelections] = useState({}) // { [farmId]: { date, window, zoneId, fee } }
+
   // Group items by farm
   const farmGroups = useMemo(() => {
     const groups = {}
@@ -47,6 +74,35 @@ export default function CheckoutPage() {
     })
     return Object.values(groups)
   }, [items])
+
+  // When zip changes (and delivery selected), validate zones + fetch schedules per farm
+  const validateZip = useCallback(async (zip) => {
+    if (!zip || zip.length < 5) { setZoneData({}); setScheduleData({}); return }
+
+    const newZoneData = {}
+    const newSchedData = {}
+
+    await Promise.all(farmGroups.map(async ({ farmId }) => {
+      newZoneData[farmId] = 'loading'
+      const [zoneRes, schedRes] = await Promise.all([
+        supabase.from('delivery_zones').select('id, delivery_fee, minimum_order_amount').eq('farm_id', farmId).eq('postal_code', zip).eq('is_active', true).maybeSingle(),
+        supabase.from('delivery_schedules').select('day_of_week, time_window').eq('farm_id', farmId).eq('is_active', true).order('day_of_week'),
+      ])
+      newZoneData[farmId] = zoneRes.data ?? null
+      newSchedData[farmId] = schedRes.data ?? []
+    }))
+
+    setZoneData(newZoneData)
+    setScheduleData(newSchedData)
+    // Reset delivery selections when zip changes
+    setDeliverySelections({})
+  }, [farmGroups])
+
+  useEffect(() => {
+    if (fulfillment === 'delivery' && address.postal_code.length >= 5) {
+      validateZip(address.postal_code)
+    }
+  }, [fulfillment, address.postal_code, validateZip])
 
   if (items.length === 0) {
     return (
@@ -66,10 +122,33 @@ export default function CheckoutPage() {
     )
   }
 
-  const subtotal    = items.reduce((s, i) => s + i.product.price * i.quantity, 0)
-  const deliveryFee = fulfillment === 'delivery' ? DELIVERY_FEE * farmGroups.length : 0
-  const taxAmount   = (subtotal + deliveryFee) * TAX_RATE
-  const total       = subtotal + deliveryFee + taxAmount
+  const subtotal = items.reduce((s, i) => s + i.product.price * i.quantity, 0)
+
+  // Delivery fee: sum zone-specific fees, fall back to $5 per farm if no zone data yet
+  const deliveryFee = fulfillment === 'delivery'
+    ? farmGroups.reduce((sum, { farmId }) => {
+        const zone = zoneData[farmId]
+        if (zone && zone !== 'loading') return sum + Number(zone.delivery_fee)
+        if (zone === null) return sum // no zone = blocked, no fee in total
+        return sum + DELIVERY_FEE // loading/unknown = use fallback
+      }, 0)
+    : 0
+
+  const taxAmount = (subtotal + deliveryFee) * TAX_RATE
+  const total     = subtotal + deliveryFee + taxAmount
+
+  // Are all delivery farms covered by a zone?
+  const allZonesCovered = fulfillment !== 'delivery' || farmGroups.every(({ farmId }) => {
+    const zone = zoneData[farmId]
+    return zone && zone !== 'loading'
+  })
+
+  // Are all delivery selections made?
+  const allSchedulesSelected = fulfillment !== 'delivery' || farmGroups.every(({ farmId }) => {
+    const schedules = scheduleData[farmId]
+    if (!schedules || schedules.length === 0) return true // no schedule = no picker needed
+    return !!deliverySelections[farmId]?.date
+  })
 
   async function handlePlaceOrder() {
     setError('')
@@ -82,24 +161,25 @@ export default function CheckoutPage() {
       setError('Please complete the delivery address.')
       return
     }
+    if (!allZonesCovered) {
+      setError('One or more farms do not deliver to your zip code. Please use pickup for those items.')
+      return
+    }
 
     setLoading(true)
     try {
       const { data, error: fnErr } = await supabase.functions.invoke('create-checkout-session', {
-        body: { items, fulfillment, address, notes, guestInfo },
+        body: { items, fulfillment, address, notes, guestInfo, deliverySelections },
       })
 
       if (fnErr) throw new Error(fnErr.message)
       if (data?.error) throw new Error(data.error)
 
-      // Redirect to Stripe Checkout — page leaves here on success
       window.location.href = data.url
     } catch (err) {
       setError(err.message || 'Something went wrong. Please try again.')
       setLoading(false)
     }
-    // Note: setLoading(false) is intentionally omitted on success —
-    // the page redirects away so we keep the loading state until Stripe loads.
   }
 
   return (
@@ -259,41 +339,122 @@ export default function CheckoutPage() {
                 >
                   <Truck className={`w-6 h-6 mb-2 ${fulfillment === 'delivery' ? 'text-green-700' : 'text-stone-400'}`} />
                   <p className="font-semibold text-stone-800">Home delivery</p>
-                  <p className="text-sm text-stone-500">$5.00 per farm · 1–3 days</p>
+                  <p className="text-sm text-stone-500">Fee varies by farm · Schedule at checkout</p>
                 </button>
               </div>
 
               {fulfillment === 'delivery' && (
-                <div className="px-6 pb-6 border-t border-stone-100 pt-5 grid grid-cols-2 gap-4">
-                  <div className="col-span-2">
-                    <Field label="Street address" required>
+                <div className="px-6 pb-6 border-t border-stone-100 pt-5 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2">
+                      <Field label="Street address" required>
+                        <input
+                          type="text"
+                          value={address.line1}
+                          onChange={e => setAddress(p => ({ ...p, line1: e.target.value }))}
+                          className={inputCls}
+                          placeholder="123 Main St"
+                        />
+                      </Field>
+                    </div>
+                    <Field label="City" required>
                       <input
                         type="text"
-                        value={address.line1}
-                        onChange={e => setAddress(p => ({ ...p, line1: e.target.value }))}
+                        value={address.city}
+                        onChange={e => setAddress(p => ({ ...p, city: e.target.value }))}
                         className={inputCls}
-                        placeholder="123 Main St"
+                        placeholder="Bakersfield"
+                      />
+                    </Field>
+                    <Field label="ZIP code" required>
+                      <input
+                        type="text"
+                        value={address.postal_code}
+                        onChange={e => setAddress(p => ({ ...p, postal_code: e.target.value }))}
+                        className={inputCls}
+                        placeholder="93301"
+                        maxLength={5}
                       />
                     </Field>
                   </div>
-                  <Field label="City" required>
-                    <input
-                      type="text"
-                      value={address.city}
-                      onChange={e => setAddress(p => ({ ...p, city: e.target.value }))}
-                      className={inputCls}
-                      placeholder="Bakersfield"
-                    />
-                  </Field>
-                  <Field label="ZIP code" required>
-                    <input
-                      type="text"
-                      value={address.postal_code}
-                      onChange={e => setAddress(p => ({ ...p, postal_code: e.target.value }))}
-                      className={inputCls}
-                      placeholder="93301"
-                    />
-                  </Field>
+
+                  {/* Per-farm zone validation + delivery date picker */}
+                  {address.postal_code.length >= 5 && farmGroups.map(({ farmId, farmName }) => {
+                    const zone      = zoneData[farmId]
+                    const schedules = scheduleData[farmId] ?? []
+                    const dates     = getAvailableDates(schedules)
+                    const sel       = deliverySelections[farmId]
+
+                    if (zone === 'loading') {
+                      return (
+                        <div key={farmId} className="bg-stone-50 rounded-xl p-3 text-sm text-stone-400 animate-pulse">
+                          Checking delivery availability for {farmName}…
+                        </div>
+                      )
+                    }
+
+                    if (zone === null) {
+                      return (
+                        <div key={farmId} className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
+                          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                          <span><strong>{farmName}</strong> does not deliver to {address.postal_code}. Switch to pickup for these items or choose a different address.</span>
+                        </div>
+                      )
+                    }
+
+                    return (
+                      <div key={farmId} className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <p className="font-medium text-green-800 text-sm">{farmName}</p>
+                          <span className="text-green-700 font-semibold text-sm">
+                            Delivery fee: ${Number(zone.delivery_fee).toFixed(2)}
+                          </span>
+                        </div>
+                        {zone.minimum_order_amount > 0 && (
+                          <p className="text-xs text-green-600">Min. order: ${Number(zone.minimum_order_amount).toFixed(2)}</p>
+                        )}
+
+                        {dates.length > 0 && (
+                          <div>
+                            <p className="text-xs font-medium text-green-700 mb-2 flex items-center gap-1">
+                              <Calendar className="w-3.5 h-3.5" /> Choose delivery day
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              {dates.map(d => (
+                                <button
+                                  key={d.date}
+                                  type="button"
+                                  onClick={() => setDeliverySelections(prev => ({
+                                    ...prev,
+                                    [farmId]: { date: d.date, window: d.window, zoneId: zone.id, fee: Number(zone.delivery_fee) },
+                                  }))}
+                                  className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${
+                                    sel?.date === d.date
+                                      ? 'bg-green-700 text-white'
+                                      : 'bg-white border border-green-300 text-green-700 hover:bg-green-100'
+                                  }`}
+                                >
+                                  {d.label}
+                                  <span className="block opacity-75">{d.window}</span>
+                                </button>
+                              ))}
+                            </div>
+                            {sel?.date && (
+                              <p className="text-xs text-green-600 mt-2 flex items-center gap-1">
+                                <Check className="w-3.5 h-3.5" /> Scheduled: {sel.date} · {sel.window}
+                              </p>
+                            )}
+                            {dates.length > 0 && !sel?.date && (
+                              <p className="text-xs text-amber-600 mt-1">Please select a delivery day</p>
+                            )}
+                          </div>
+                        )}
+                        {dates.length === 0 && schedules.length === 0 && (
+                          <p className="text-xs text-green-600">No specific delivery schedule — the farm will contact you to arrange delivery.</p>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -325,11 +486,9 @@ export default function CheckoutPage() {
                   <span>Subtotal</span>
                   <span>${subtotal.toFixed(2)}</span>
                 </div>
-                {fulfillment === 'delivery' && (
+                {fulfillment === 'delivery' && deliveryFee > 0 && (
                   <div className="flex justify-between text-stone-600">
-                    <span>
-                      Delivery fee{farmGroups.length > 1 ? ` (${farmGroups.length} farms)` : ''}
-                    </span>
+                    <span>Delivery fee{farmGroups.length > 1 ? ` (${farmGroups.length} farms)` : ''}</span>
                     <span>${deliveryFee.toFixed(2)}</span>
                   </div>
                 )}
@@ -366,7 +525,7 @@ export default function CheckoutPage() {
 
                 <button
                   onClick={handlePlaceOrder}
-                  disabled={loading}
+                  disabled={loading || (fulfillment === 'delivery' && (!allZonesCovered || !allSchedulesSelected))}
                   className="w-full bg-green-700 hover:bg-green-600 text-white font-semibold py-4 rounded-2xl transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {loading ? (

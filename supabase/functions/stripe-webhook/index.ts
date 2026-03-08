@@ -108,7 +108,7 @@ Deno.serve(async (req: Request) => {
 
 async function handleAccountUpdated(account: Stripe.Account) {
   // Fired repeatedly during onboarding — once charges_enabled flips true, the farmer is live
-  const { error } = await supabase
+  const { error: farmErr, data: farmRows } = await supabase
     .from('farms')
     .update({
       stripe_account_id:  account.id,
@@ -116,8 +116,18 @@ async function handleAccountUpdated(account: Stripe.Account) {
       details_submitted:  account.details_submitted,
     })
     .eq('stripe_account_id', account.id)
+    .select('id')
 
-  if (error) throw error
+  if (farmErr) throw farmErr
+
+  // If no farm matched, the account belongs to a driver
+  if (!farmRows?.length) {
+    await supabase
+      .from('drivers')
+      .update({ stripe_connect_enabled: account.charges_enabled })
+      .eq('stripe_account_id', account.id)
+  }
+
   console.log(`[account.updated] ${account.id} charges_enabled=${account.charges_enabled}`)
 }
 
