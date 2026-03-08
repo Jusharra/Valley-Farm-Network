@@ -239,7 +239,7 @@ export default function AccountPage() {
           <div className="w-9 h-9 bg-gradient-to-br from-green-600 to-green-700 rounded-xl flex items-center justify-center shadow">
             <Leaf className="w-5 h-5 text-white" />
           </div>
-          <span className="font-bold text-stone-800" style={{ fontFamily: 'Georgia, serif' }}>Kern Harvest</span>
+          <span className="font-bold text-stone-800" style={{ fontFamily: 'Georgia, serif' }}>Valley Farm Network</span>
         </button>
         <button onClick={signOut} className="text-stone-400 hover:text-red-600 text-sm transition-colors">
           Sign out

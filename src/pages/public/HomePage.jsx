@@ -58,7 +58,7 @@ export default function HomePage() {
                 <Leaf className="w-7 h-7 text-white" />
               </div>
               <span className="text-2xl font-bold text-stone-800" style={{ fontFamily: 'Georgia, serif' }}>
-                Kern Harvest
+                Valley Farm Network
               </span>
             </div>
             <div className="flex items-center gap-4">
@@ -81,7 +81,7 @@ export default function HomePage() {
                     onClick={() => navigate('/signup?role=farmer')}
                     className="text-stone-600 hover:text-green-700 font-medium transition-colors"
                   >
-                    Sell on Kern Harvest
+                    Sell on Valley Farm Network
                   </button>
                   <button onClick={() => navigate('/signin')} className={styles.buttonSecondary}>
                     Sign In
@@ -332,10 +332,10 @@ export default function HomePage() {
               <Leaf className="w-5 h-5 text-white" />
             </div>
             <span className="text-xl font-bold text-stone-700" style={{ fontFamily: 'Georgia, serif' }}>
-              Kern Harvest
+              Valley Farm Network
             </span>
           </div>
-          <p>© 2026 Kern Harvest. Supporting local farms in Bakersfield and beyond.</p>
+          <p>© 2026 Valley Farm Network. Supporting local farms in Bakersfield and beyond.</p>
         </div>
       </footer>
     </div>

@@ -32,7 +32,7 @@ export default function CheckoutSuccessPage() {
               <Leaf className="w-4 h-4 text-white" />
             </div>
             <span className="font-bold text-stone-800" style={{ fontFamily: 'Georgia, serif' }}>
-              Kern Harvest
+              Valley Farm Network
             </span>
           </div>
         </div>

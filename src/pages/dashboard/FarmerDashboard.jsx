@@ -1060,7 +1060,7 @@ function FarmProfileSection({ form, setForm, onSave, saving, farm }) {
           </a>
 
           <a
-            href={`mailto:?subject=Check out ${encodeURIComponent(farm.farm_name)} on Kern Harvest!&body=I found this farm and thought you'd love their products: ${farmUrl}`}
+            href={`mailto:?subject=Check out ${encodeURIComponent(farm.farm_name)} on Valley Farm Network!&body=I found this farm and thought you'd love their products: ${farmUrl}`}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium bg-stone-700 text-white hover:bg-stone-800 transition-colors"
           >
             <Mail size={14} />
@@ -1070,7 +1070,7 @@ function FarmProfileSection({ form, setForm, onSave, saving, farm }) {
           {'share' in navigator ? (
             <button
               type="button"
-              onClick={() => navigator.share({ title: farm.farm_name, text: `Check out ${farm.farm_name} on Kern Harvest!`, url: farmUrl })}
+              onClick={() => navigator.share({ title: farm.farm_name, text: `Check out ${farm.farm_name} on Valley Farm Network!`, url: farmUrl })}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600 transition-all"
             >
               <Share2 size={14} />
@@ -1850,7 +1850,7 @@ function SubscriptionSection({ farm, onConnect, connectLoading, onManage, portal
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-stone-800">Billing & Plan</h1>
-        <p className="text-stone-500 mt-1">Manage your Kern Harvest subscription and payment account.</p>
+        <p className="text-stone-500 mt-1">Manage your Valley Farm Network subscription and payment account.</p>
       </div>
 
       {/* Stripe Connect status */}

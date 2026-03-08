@@ -55,7 +55,7 @@ function OnboardingForm({ profile, onComplete, signOut }) {
             <Truck className="w-7 h-7 text-white" />
           </div>
           <span className="text-2xl font-bold text-stone-800" style={{ fontFamily: 'Georgia, serif' }}>
-            Kern Harvest
+            Valley Farm Network
           </span>
         </div>
 
@@ -496,7 +496,7 @@ function ActiveDashboard({ driver, setDriver, profile, signOut }) {
             <Leaf className="w-5 h-5 text-white" />
           </div>
           <div>
-            <span className="font-bold text-white">Kern Harvest</span>
+            <span className="font-bold text-white">Valley Farm Network</span>
             <span className="block text-xs text-blue-300">Driver Portal</span>
           </div>
         </div>

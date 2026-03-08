@@ -411,7 +411,7 @@ export default function AdminDashboard() {
             <Leaf className="w-5 h-5 text-white" />
           </div>
           <div>
-            <span className="font-bold text-stone-800">Kern Harvest</span>
+            <span className="font-bold text-stone-800">Valley Farm Network</span>
             <span className="block text-xs text-stone-400">Admin Panel</span>
           </div>
         </div>
@@ -808,7 +808,7 @@ export default function AdminDashboard() {
                         <label className="block text-sm font-medium text-stone-700 mb-1">Store name</label>
                         <input
                           type="text" required className={styles.input}
-                          placeholder="Kern Harvest Marketplace"
+                          placeholder="Valley Farm Network Marketplace"
                           value={farmForm.farm_name}
                           onChange={e => {
                             const name = e.target.value

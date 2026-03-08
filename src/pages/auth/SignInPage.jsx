@@ -52,7 +52,7 @@ export default function SignInPage() {
             <Leaf className="w-7 h-7 text-white" />
           </div>
           <span className="text-2xl font-bold text-stone-800" style={{ fontFamily: 'Georgia, serif' }}>
-            Kern Harvest
+            Valley Farm Network
           </span>
         </div>
 
