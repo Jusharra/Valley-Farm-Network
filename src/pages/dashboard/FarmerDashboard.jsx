@@ -1849,7 +1849,8 @@ function SubscribersSection({ subscribers }) {
 // ─── Subscription Section ─────────────────────────────────────────────────────
 
 function SubscriptionSection({ farm, onConnect, connectLoading, onManage, portalLoading, dbPlans, platformSub, planLoading, onSwitchPlan }) {
-  const stripeConnected   = !!farm?.stripe_account_id
+  const stripeActive      = !!farm?.stripe_account_id && !!farm?.charges_enabled
+  const stripePending     = !!farm?.stripe_account_id && !farm?.charges_enabled
   const currentPlanSlug   = platformSub?.farm_plans?.slug ?? null
   const hasStripeCustomer = !!platformSub?.stripe_customer_id
 
@@ -1861,7 +1862,7 @@ function SubscriptionSection({ farm, onConnect, connectLoading, onManage, portal
       </div>
 
       {/* Stripe Connect status */}
-      {stripeConnected ? (
+      {stripeActive ? (
         <div className="bg-green-50 border border-green-200 rounded-2xl p-5 mb-6 flex items-center gap-4">
           <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center flex-shrink-0">
             <Check className="w-5 h-5 text-green-700" />
@@ -1869,6 +1870,21 @@ function SubscriptionSection({ farm, onConnect, connectLoading, onManage, portal
           <div>
             <p className="font-semibold text-green-800">Stripe account connected</p>
             <p className="text-sm text-green-600 mt-0.5">You can receive payments from customers.</p>
+          </div>
+        </div>
+      ) : stripePending ? (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 mb-6">
+          <div className="flex items-start gap-4">
+            <AlertCircle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-bold text-amber-800 mb-1">Stripe onboarding incomplete</p>
+              <p className="text-sm text-amber-700 mb-4">
+                Your Stripe account was created but isn't active yet. Please finish the onboarding steps in Stripe so customers can pay you.
+              </p>
+              <button onClick={onConnect} disabled={connectLoading} className={styles.buttonPrimary}>
+                {connectLoading ? 'Redirecting to Stripe...' : 'Complete Stripe setup →'}
+              </button>
+            </div>
           </div>
         </div>
       ) : (
