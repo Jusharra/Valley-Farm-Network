@@ -1,7 +1,9 @@
 import { useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
+import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../context/AuthContext'
 import {
-  Leaf, ChevronDown, ChevronUp, Check, ExternalLink,
+  Leaf, ChevronDown, ChevronUp, Check,
   CreditCard, Package, ShoppingBag, Truck, Star,
   BookOpen, Mail, HelpCircle, ArrowLeft, AlertCircle,
 } from 'lucide-react'
@@ -82,22 +84,39 @@ const NAV_ITEMS = [
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function FarmerHelpPage() {
-  const [form, setForm]         = useState({ name: '', email: '', subject: 'General Question', message: '' })
+  const { profile, session } = useAuth()
+  const [form, setForm]       = useState({
+    name:    profile?.full_name ?? '',
+    email:   profile?.email ?? session?.user?.email ?? '',
+    subject: 'General Question',
+    message: '',
+  })
   const [submitted, setSubmitted] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState(null)
   const topRef = useRef(null)
 
   function scrollTo(id) {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault()
-    const body = encodeURIComponent(
-      `Name: ${form.name}\nEmail: ${form.email}\n\n${form.message}`
-    )
-    const sub  = encodeURIComponent(`[Support] ${form.subject}`)
-    window.location.href = `mailto:${SUPPORT_EMAIL}?subject=${sub}&body=${body}`
-    setSubmitted(true)
+    setSubmitting(true)
+    setSubmitError(null)
+    const { error } = await supabase.from('support_tickets').insert({
+      user_id: session?.user?.id ?? null,
+      name:    form.name,
+      email:   form.email,
+      subject: form.subject,
+      message: form.message,
+    })
+    setSubmitting(false)
+    if (error) {
+      setSubmitError(error.message)
+    } else {
+      setSubmitted(true)
+    }
   }
 
   return (
@@ -440,9 +459,9 @@ export default function FarmerHelpPage() {
                 <div className="w-14 h-14 bg-green-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
                   <Check className="w-7 h-7 text-green-700" />
                 </div>
-                <h3 className="font-bold text-stone-800 text-lg mb-2">Your email client should have opened</h3>
+                <h3 className="font-bold text-stone-800 text-lg mb-2">Ticket submitted!</h3>
                 <p className="text-stone-500 text-sm mb-4">
-                  If it didn't open automatically, email us directly at{' '}
+                  We'll get back to you within one business day. You can also reach us directly at{' '}
                   <a href={`mailto:${SUPPORT_EMAIL}`} className="text-green-700 underline">{SUPPORT_EMAIL}</a>.
                 </p>
                 <button
@@ -509,17 +528,23 @@ export default function FarmerHelpPage() {
                   />
                 </div>
 
+                {submitError && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-xl">
+                    {submitError}
+                  </div>
+                )}
                 <div className="flex items-center justify-between pt-1">
                   <p className="text-xs text-stone-400">
-                    This will open your email client pre-filled with your message. Alternatively, email{' '}
-                    <a href={`mailto:${SUPPORT_EMAIL}`} className="text-green-700 underline">{SUPPORT_EMAIL}</a> directly.
+                    You can also email us directly at{' '}
+                    <a href={`mailto:${SUPPORT_EMAIL}`} className="text-green-700 underline">{SUPPORT_EMAIL}</a>.
                   </p>
                   <button
                     type="submit"
-                    className="shrink-0 flex items-center gap-2 bg-green-700 hover:bg-green-800 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors"
+                    disabled={submitting}
+                    className="shrink-0 flex items-center gap-2 bg-green-700 hover:bg-green-800 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     <Mail className="w-4 h-4" />
-                    Send ticket
+                    {submitting ? 'Sending…' : 'Send ticket'}
                   </button>
                 </div>
               </form>

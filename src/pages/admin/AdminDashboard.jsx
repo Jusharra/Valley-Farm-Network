@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Leaf, BarChart3, Store, Package, ShoppingBag, Users, Truck, Settings,
-  DollarSign, Star, CheckCircle, XCircle, ShieldCheck, Power, Globe, Plus, ExternalLink, Camera, X, Edit2, Trash2,
+  DollarSign, Star, CheckCircle, XCircle, ShieldCheck, Power, Globe, Plus, ExternalLink, Camera, X, Edit2, Trash2, Inbox, ChevronDown,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
@@ -11,14 +11,15 @@ import AccountSettings from '../../components/AccountSettings'
 import Toast, { makeNotify } from '../../components/Toast'
 
 const NAV_ITEMS = [
-  { id: 'overview',     label: 'Overview',     icon: BarChart3   },
-  { id: 'farms',        label: 'Farms',        icon: Store       },
-  { id: 'products',     label: 'Products',     icon: Package     },
-  { id: 'storefront',   label: 'Storefront',   icon: Globe       },
-  { id: 'orders',       label: 'Platform Orders',       icon: ShoppingBag },
-  { id: 'subscribers',  label: 'Subscribers',  icon: Users       },
-  { id: 'drivers',      label: 'Drivers',      icon: Truck       },
-  { id: 'settings',     label: 'Settings',     icon: Settings    },
+  { id: 'overview',     label: 'Overview',        icon: BarChart3   },
+  { id: 'farms',        label: 'Farms',            icon: Store       },
+  { id: 'products',     label: 'Products',         icon: Package     },
+  { id: 'storefront',   label: 'Storefront',       icon: Globe       },
+  { id: 'orders',       label: 'Platform Orders',  icon: ShoppingBag },
+  { id: 'subscribers',  label: 'Subscribers',      icon: Users       },
+  { id: 'drivers',      label: 'Drivers',          icon: Truck       },
+  { id: 'support',      label: 'Support Tickets',  icon: Inbox       },
+  { id: 'settings',     label: 'Settings',         icon: Settings    },
 ]
 
 const ORDER_STATUS = {
@@ -84,6 +85,85 @@ function Toggle({ on, onToggle }) {
 
 const fmt = n => (n == null ? '—' : Number(n).toFixed(2))
 
+const TICKET_STATUS_COLORS = {
+  open:        'bg-amber-100 text-amber-700',
+  in_progress: 'bg-blue-100 text-blue-700',
+  resolved:    'bg-green-100 text-green-700',
+}
+
+function TicketCard({ ticket, onStatusChange, onSaveNotes }) {
+  const [expanded, setExpanded] = useState(false)
+  const [notes, setNotes]       = useState(ticket.admin_notes ?? '')
+  const [saving, setSaving]     = useState(false)
+
+  async function handleSave() {
+    setSaving(true)
+    await onSaveNotes(ticket.id, notes)
+    setSaving(false)
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-stone-200 overflow-hidden">
+      {/* Header row */}
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="w-full px-5 py-4 flex items-center gap-4 hover:bg-stone-50 transition-colors text-left"
+      >
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-stone-800 truncate">{ticket.subject}</p>
+          <p className="text-xs text-stone-400 mt-0.5">
+            {ticket.name} · {ticket.email} · {new Date(ticket.created_at).toLocaleDateString()}
+          </p>
+        </div>
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${TICKET_STATUS_COLORS[ticket.status] ?? ''}`}>
+          {ticket.status.replace('_', ' ')}
+        </span>
+        <ChevronDown className={`w-4 h-4 text-stone-400 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+      </button>
+
+      {/* Expanded body */}
+      {expanded && (
+        <div className="border-t border-stone-100 px-5 py-4 space-y-4">
+          <p className="text-stone-700 text-sm whitespace-pre-wrap">{ticket.message}</p>
+
+          {/* Status control */}
+          <div className="flex items-center gap-3">
+            <label className="text-xs font-semibold text-stone-500 uppercase tracking-wide">Status</label>
+            <select
+              value={ticket.status}
+              onChange={e => onStatusChange(ticket.id, e.target.value)}
+              className="text-sm border border-stone-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-green-500"
+            >
+              <option value="open">Open</option>
+              <option value="in_progress">In Progress</option>
+              <option value="resolved">Resolved</option>
+            </select>
+          </div>
+
+          {/* Admin notes */}
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-stone-500 uppercase tracking-wide">Admin Notes</label>
+            <textarea
+              rows={3}
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Internal notes (not visible to the farmer)…"
+              className="w-full text-sm border border-stone-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+            />
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="text-sm bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white font-medium px-4 py-1.5 rounded-lg transition-colors"
+            >
+              {saving ? 'Saving…' : 'Save Notes'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function AdminDashboard() {
   const navigate = useNavigate()
   const { profile, session, signOut } = useAuth()
@@ -113,6 +193,9 @@ export default function AdminDashboard() {
 
   const [categories, setCategories]   = useState([])
   const [catsLoading, setCatsLoading] = useState(false)
+
+  const [tickets, setTickets]             = useState([])
+  const [ticketsLoading, setTicketsLoading] = useState(false)
 
   // Storefront (admin's own farm)
   const [myFarm, setMyFarm]                       = useState(null)
@@ -225,6 +308,16 @@ export default function AdminDashboard() {
         .order('sort_order')
         .then(({ data }) => setCategories(data ?? []))
         .finally(() => setCatsLoading(false))
+    }
+
+    if (activeTab === 'support') {
+      setTicketsLoading(true)
+      supabase
+        .from('support_tickets')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .then(({ data }) => setTickets(data ?? []))
+        .finally(() => setTicketsLoading(false))
     }
 
     if (activeTab === 'storefront') {
@@ -398,6 +491,24 @@ export default function AdminDashboard() {
     setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, is_active: next } : c))
     const { error } = await supabase.from('categories').update({ is_active: next }).eq('id', cat.id)
     if (error) setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, is_active: cat.is_active } : c))
+  }
+
+  async function updateTicketStatus(id, status) {
+    setTickets(prev => prev.map(t => t.id === id ? { ...t, status } : t))
+    const { error } = await supabase.from('support_tickets').update({ status, updated_at: new Date().toISOString() }).eq('id', id)
+    if (error) {
+      setTickets(prev => prev.map(t => t.id === id ? { ...t, status: t.status } : t))
+      notify('error', error.message)
+    }
+  }
+
+  async function saveTicketNotes(id, admin_notes) {
+    const { error } = await supabase.from('support_tickets').update({ admin_notes, updated_at: new Date().toISOString() }).eq('id', id)
+    if (error) notify('error', error.message)
+    else {
+      setTickets(prev => prev.map(t => t.id === id ? { ...t, admin_notes } : t))
+      notify('success', 'Notes saved.')
+    }
   }
 
   return (
@@ -1161,6 +1272,22 @@ export default function AdminDashboard() {
                       </button>
                     </div>
                   </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {/* ── SUPPORT TICKETS ── */}
+          {activeTab === 'support' && (
+            ticketsLoading ? <TableSkeleton rows={4} /> : tickets.length === 0 ? <EmptyState icon={Inbox} message="No support tickets yet." /> : (
+              <div className="space-y-3">
+                {tickets.map(ticket => (
+                  <TicketCard
+                    key={ticket.id}
+                    ticket={ticket}
+                    onStatusChange={updateTicketStatus}
+                    onSaveNotes={saveTicketNotes}
+                  />
                 ))}
               </div>
             )

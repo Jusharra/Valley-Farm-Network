@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams, Link as RouterLink } from 'react-router-dom'
 import {
   LayoutDashboard, Store, Package, ShoppingBag, CreditCard,
   LogOut, Plus, Edit2, Trash2, X, Check, Leaf, AlertCircle, Camera, Link, Share2, Mail, Users, Settings,
@@ -497,13 +497,13 @@ export default function FarmerDashboard() {
             <p className="text-green-300 text-xs font-medium truncate">{profile?.full_name}</p>
             <p className="text-green-500 text-xs truncate">{profile?.email ?? session?.user?.email}</p>
           </div>
-          <Link
+          <RouterLink
             to="/help"
             className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-green-300 hover:text-white hover:bg-white/10 transition-all"
           >
             <HelpCircle className="w-4 h-4" />
             <span className="text-sm">Help & Support</span>
-          </Link>
+          </RouterLink>
           <button
             onClick={signOut}
             className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-green-300 hover:text-white hover:bg-white/10 transition-all"
