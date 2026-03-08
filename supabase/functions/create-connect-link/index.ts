@@ -66,10 +66,16 @@ Deno.serve(async (req: Request) => {
 
   let accountId = farm.stripe_account_id
   if (!accountId) {
-    const account = await stripe.accounts.create({
-      type: 'express',
-      metadata: { farm_id: farm.id },
-    })
+    let account: Stripe.Account
+    try {
+      account = await stripe.accounts.create({
+        type: 'express',
+        metadata: { farm_id: farm.id },
+      })
+    } catch (err: any) {
+      console.error('[create-connect-link] stripe.accounts.create failed:', err?.message)
+      return json({ error: `Stripe error: ${err?.message ?? 'Could not create account'}` }, 502)
+    }
     accountId = account.id
 
     const { error: updateError } = await adminClient
@@ -80,12 +86,18 @@ Deno.serve(async (req: Request) => {
     if (updateError) return json({ error: 'Database update failed' }, 500)
   }
 
-  const accountLink = await stripe.accountLinks.create({
-    account:     accountId,
-    return_url,
-    refresh_url,
-    type: 'account_onboarding',
-  })
+  let accountLink: Stripe.AccountLink
+  try {
+    accountLink = await stripe.accountLinks.create({
+      account:     accountId,
+      return_url,
+      refresh_url,
+      type: 'account_onboarding',
+    })
+  } catch (err: any) {
+    console.error('[create-connect-link] stripe.accountLinks.create failed:', err?.message)
+    return json({ error: `Stripe error: ${err?.message ?? 'Could not create onboarding link'}` }, 502)
+  }
 
   console.log(`[create-connect-link] farm=${farm.id} account=${accountId}`)
   return json({ url: accountLink.url })

@@ -275,7 +275,10 @@ export default function FarmerDashboard() {
           refresh_url: `${window.location.origin}/dashboard?stripe=refresh`,
         },
       })
-      if (error) throw error
+      if (error) {
+        const body = await error.context?.json?.().catch(() => null)
+        throw new Error(body?.error ?? error.message ?? 'Could not start Stripe onboarding.')
+      }
       window.location.href = data.url
     } catch (err) {
       notify('error', err.message ?? 'Could not start Stripe onboarding. Try again.')
