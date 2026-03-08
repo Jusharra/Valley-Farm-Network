@@ -8,6 +8,7 @@ import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { styles } from '../../lib/styles'
 import AccountSettings from '../../components/AccountSettings'
+import Toast, { makeNotify } from '../../components/Toast'
 
 const NAV_ITEMS = [
   { id: 'overview',     label: 'Overview',     icon: BarChart3   },
@@ -87,6 +88,8 @@ export default function AdminDashboard() {
   const navigate = useNavigate()
   const { profile, session, signOut } = useAuth()
   const [activeTab, setActiveTab] = useState('overview')
+  const [toast, setToast]         = useState(null)
+  const notify                    = makeNotify(setToast)
 
   // Per-tab state
   const [stats, setStats]             = useState(null)
@@ -286,7 +289,7 @@ export default function AdminDashboard() {
     const { error: upErr } = await supabase.storage.from('farm-images').upload(path, file, { upsert: true })
     if (upErr) {
       console.error('Banner upload error:', upErr.message)
-      alert(`Upload failed: ${upErr.message}`)
+      notify('error', `Upload failed: ${upErr.message}`)
       setBannerUploading(false)
       return
     }
@@ -372,8 +375,9 @@ export default function AdminDashboard() {
       if (!error && data) setProducts(prev => [data, ...prev])
     }
     if (error) {
-      alert(`Failed to save product: ${error.message}`)
+      notify('error', `Failed to save product: ${error.message}`)
     } else {
+      notify('success', editingProduct ? 'Product updated.' : 'Product added.')
       setProductForm({ name: '', price: '', unit_name: 'each', product_type: 'one_time', category_id: '', description: '', image_url: '', is_active: true })
       setEditingProduct(null)
       setShowProductForm(false)
@@ -383,9 +387,10 @@ export default function AdminDashboard() {
 
   async function deleteProduct(id) {
     const { error } = await supabase.from('products').delete().eq('id', id)
-    if (error) { alert(`Failed to delete: ${error.message}`); return }
+    if (error) { notify('error', `Failed to delete: ${error.message}`); return }
     setProducts(prev => prev.filter(p => p.id !== id))
     setConfirmDelete(null)
+    notify('success', 'Product deleted.')
   }
 
   async function toggleCategoryActive(cat) {
@@ -397,6 +402,7 @@ export default function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-stone-50">
+      <Toast msg={toast} />
 
       {/* ── Sidebar ── */}
       <div className="fixed left-0 top-0 bottom-0 w-64 bg-white border-r border-stone-200 p-6 flex flex-col">

@@ -12,6 +12,7 @@ import { useOrders } from '../../hooks/useOrders'
 import { useCategories } from '../../hooks/useCategories'
 import { styles } from '../../lib/styles'
 import { supabase } from '../../lib/supabase'
+import Toast, { makeNotify } from '../../components/Toast'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -59,20 +60,6 @@ const BLANK_PRODUCT = {
 
 function formatDate(iso) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function Toast({ msg }) {
-  if (!msg) return null
-  return (
-    <div className={`fixed top-6 right-6 z-50 px-5 py-4 rounded-2xl shadow-2xl flex items-center gap-3 ${
-      msg.type === 'success' ? 'bg-green-700 text-white' : 'bg-red-600 text-white'
-    }`}>
-      {msg.type === 'success'
-        ? <Check className="w-5 h-5 flex-shrink-0" />
-        : <AlertCircle className="w-5 h-5 flex-shrink-0" />}
-      <span className="text-sm font-medium">{msg.text}</span>
-    </div>
-  )
 }
 
 // ─── Main Component ────────────────────────────────────────────────────────────
@@ -156,10 +143,7 @@ export default function FarmerDashboard() {
     }
   }, [farm, farmForm])
 
-  function notify(type, text) {
-    setToast({ type, text })
-    setTimeout(() => setToast(null), type === 'success' ? 3000 : 5000)
-  }
+  const notify = makeNotify(setToast)
 
   // ── Create farm ──
   async function handleCreateFarm(e) {

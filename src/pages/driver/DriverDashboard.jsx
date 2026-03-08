@@ -8,6 +8,7 @@ import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { styles } from '../../lib/styles'
 import AccountSettings from '../../components/AccountSettings'
+import Toast, { makeNotify } from '../../components/Toast'
 
 // ── Status config ─────────────────────────────────────────────────────────────
 const STATUS_STYLE = {
@@ -333,11 +334,14 @@ function ActiveDashboard({ driver, setDriver, profile, signOut }) {
   const [deliveriesLoading, setDeliveriesLoading] = useState(true)
   const [filter, setFilter]             = useState('active')
 
+  // Toast
+  const [toast, setToast]               = useState(null)
+  const notify                          = makeNotify(setToast)
+
   // Available jobs (driver network)
   const [openJobs, setOpenJobs]         = useState([])
   const [jobsLoading, setJobsLoading]   = useState(false)
   const [acceptingJob, setAcceptingJob] = useState(null)
-  const [jobToast, setJobToast]         = useState(null)
 
   // Service areas
   const [areas, setAreas]               = useState([])
@@ -400,19 +404,24 @@ function ActiveDashboard({ driver, setDriver, profile, signOut }) {
   // ── Mutations ──
   async function updateStatus(delivery, newStatus) {
     if (newStatus === 'delivered') {
-      // Call edge function so driver gets paid
       const { error } = await supabase.functions.invoke('complete-delivery', {
         body: { deliveryId: delivery.id },
       })
-      if (error) { alert(`Error: ${error.message}`); return }
+      if (error) { notify('error', `Delivery update failed: ${error.message}`); return }
       setDeliveries(prev => prev.map(d => d.id === delivery.id
         ? { ...d, delivery_status: 'delivered', delivered_at: new Date().toISOString() } : d))
+      notify('success', 'Delivery marked complete!')
       return
     }
     const updates = { delivery_status: newStatus }
     setDeliveries(prev => prev.map(d => d.id === delivery.id ? { ...d, ...updates } : d))
     const { error } = await supabase.from('deliveries').update(updates).eq('id', delivery.id)
-    if (error) setDeliveries(prev => prev.map(d => d.id === delivery.id ? { ...d, delivery_status: delivery.delivery_status } : d))
+    if (error) {
+      setDeliveries(prev => prev.map(d => d.id === delivery.id ? { ...d, delivery_status: delivery.delivery_status } : d))
+      notify('error', `Update failed: ${error.message}`)
+    } else {
+      notify('success', newStatus === 'picked_up' ? 'Marked as picked up.' : 'Delivery updated.')
+    }
   }
 
   async function uploadPhoto(delivery, file) {
@@ -421,10 +430,11 @@ function ActiveDashboard({ driver, setDriver, profile, signOut }) {
     const { error: uploadError } = await supabase.storage
       .from('delivery-proofs')
       .upload(path, file, { upsert: true })
-    if (uploadError) { alert(`Upload failed: ${uploadError.message}`); return }
+    if (uploadError) { notify('error', `Upload failed: ${uploadError.message}`); return }
     const { data: { publicUrl } } = supabase.storage.from('delivery-proofs').getPublicUrl(path)
     setDeliveries(prev => prev.map(d => d.id === delivery.id ? { ...d, proof_photo_url: publicUrl } : d))
     await supabase.from('deliveries').update({ proof_photo_url: publicUrl }).eq('id', delivery.id)
+    notify('success', 'Photo uploaded.')
   }
 
   async function addArea() {
@@ -449,15 +459,14 @@ function ActiveDashboard({ driver, setDriver, profile, signOut }) {
     try {
       await supabase.rpc('accept_delivery_job', { p_job_id: job.id, p_driver_id: driver.id })
       setOpenJobs(prev => prev.filter(j => j.id !== job.id))
-      setJobToast({ type: 'success', msg: 'Job accepted! Check My Deliveries.' })
+      notify('success', 'Job accepted! Check My Deliveries.')
     } catch (err) {
       const msg = err?.message?.includes('job_already_taken')
         ? 'This job was just taken — try another.'
         : `Error: ${err?.message}`
-      setJobToast({ type: 'error', msg })
+      notify('error', msg)
     } finally {
       setAcceptingJob(null)
-      setTimeout(() => setJobToast(null), 4000)
     }
   }
 
@@ -468,7 +477,7 @@ function ActiveDashboard({ driver, setDriver, profile, signOut }) {
       if (error || !data?.url) throw new Error(error?.message ?? 'No URL returned')
       window.location.href = data.url
     } catch (err) {
-      alert(`Stripe Connect error: ${err.message}`)
+      notify('error', `Stripe Connect error: ${err.message}`)
       setConnectLoading(false)
     }
   }
@@ -479,6 +488,7 @@ function ActiveDashboard({ driver, setDriver, profile, signOut }) {
 
   return (
     <div className="min-h-screen bg-stone-50">
+      <Toast msg={toast} />
       {/* Sidebar */}
       <div className="fixed left-0 top-0 bottom-0 w-64 bg-blue-900 text-white p-6 flex flex-col">
         <div className="flex items-center gap-3 mb-10">
@@ -628,14 +638,6 @@ function ActiveDashboard({ driver, setDriver, profile, signOut }) {
           {/* ── AVAILABLE JOBS ── */}
           {activeTab === 'jobs' && (
             <div className="space-y-4">
-              {jobToast && (
-                <div className={`px-4 py-3 rounded-xl text-sm font-medium ${
-                  jobToast.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
-                }`}>
-                  {jobToast.msg}
-                </div>
-              )}
-
               {jobsLoading ? (
                 <div className="space-y-3">
                   {Array.from({ length: 3 }).map((_, i) => (
