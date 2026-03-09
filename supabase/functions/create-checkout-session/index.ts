@@ -31,10 +31,8 @@ Deno.serve(async (req: Request) => {
   let userId: string | null = null
   const authHeader = req.headers.get('Authorization')
   if (authHeader) {
-    const uc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
-      global: { headers: { Authorization: authHeader } },
-    })
-    const { data: { user } } = await uc.auth.getUser()
+    const token = authHeader.replace('Bearer ', '')
+    const { data: { user } } = await admin.auth.getUser(token)
     userId = user?.id ?? null
   }
 

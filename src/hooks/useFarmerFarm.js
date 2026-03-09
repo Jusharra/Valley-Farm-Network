@@ -118,5 +118,5 @@ export function useFarmerFarm() {
     ? (PLAN_LIMITS[farm.platform_plan_slug] ?? null)
     : 0
 
-  return { farm, products, loading, error, activeProductCount, productLimit, createFarm, updateFarm, addProduct, updateProduct, deleteProduct }
+  return { farm, products, loading, error, activeProductCount, productLimit, createFarm, updateFarm, addProduct, updateProduct, deleteProduct, reload: load }
 }

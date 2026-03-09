@@ -21,12 +21,10 @@ Deno.serve(async (req: Request) => {
 
   const stripe  = new Stripe(stripeKey, { apiVersion: '2023-10-16' })
   const admin   = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  const APP_URL = Deno.env.get('APP_URL') ?? 'http://localhost:5173'
+  const APP_URL = Deno.env.get('APP_URL') ?? 'valley-farm-network.netlify.app'
 
-  const uc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
-    global: { headers: { Authorization: authHeader } },
-  })
-  const { data: { user } } = await uc.auth.getUser()
+  const token = authHeader.replace('Bearer ', '')
+  const { data: { user } } = await admin.auth.getUser(token)
   if (!user) return json({ error: 'Unauthorized' }, 401)
 
   const { data: farm } = await admin

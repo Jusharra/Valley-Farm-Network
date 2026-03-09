@@ -27,21 +27,17 @@ Deno.serve(async (req: Request) => {
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'Unauthorized' }, 401)
 
-  const userClient = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_ANON_KEY')!,
-    { global: { headers: { Authorization: authHeader } } }
-  )
-  const { data: { user }, error: authError } = await userClient.auth.getUser()
-  if (authError || !user) {
-    console.error('Auth error:', authError?.message)
-    return json({ error: 'Invalid token' }, 401)
-  }
-
   const adminClient = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   )
+
+  const token = authHeader.replace('Bearer ', '')
+  const { data: { user }, error: authError } = await adminClient.auth.getUser(token)
+  if (authError || !user) {
+    console.error('Auth error:', authError?.message)
+    return json({ error: 'Invalid token' }, 401)
+  }
 
   const APP_URL = Deno.env.get('APP_URL') ?? 'http://localhost:5173'
 

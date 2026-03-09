@@ -70,7 +70,7 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 
 export default function FarmerDashboard() {
   const { profile, session, signOut } = useAuth()
-  const { farm, products, loading, activeProductCount, productLimit, createFarm, updateFarm, addProduct, updateProduct, deleteProduct } = useFarmerFarm()
+  const { farm, products, loading, activeProductCount, productLimit, createFarm, updateFarm, addProduct, updateProduct, deleteProduct, reload: reloadFarm } = useFarmerFarm()
   const { orders, subscriptions, loading: ordersLoading, updateOrderStatus } = useOrders(farm?.id)
   const { categories } = useCategories()
   const [searchParams] = useSearchParams()
@@ -128,6 +128,22 @@ export default function FarmerDashboard() {
       setPlanLoading(false)
     })
   }, [farm?.id, tab])
+
+  // When Stripe redirects back after onboarding, sync the live account status
+  useEffect(() => {
+    const stripeParam = searchParams.get('stripe')
+    if (stripeParam !== 'success' && stripeParam !== 'refresh') return
+    supabase.functions.invoke('sync-connect-account', { body: {} })
+      .then(({ data, error }) => {
+        if (!error && data?.charges_enabled) {
+          notify('success', 'Stripe account is now active!')
+        } else {
+          notify('info', 'Checking Stripe status…')
+        }
+        reloadFarm()
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // run once on mount only — param is only present right after redirect
 
   useEffect(() => {
     if (farm && !farmForm) {

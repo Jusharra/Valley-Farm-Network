@@ -16,15 +16,11 @@ Deno.serve(async (req: Request) => {
   const authHeader = req.headers.get('Authorization')
   if (!authHeader) return json({ error: 'Unauthorized' }, 401)
 
-  const userClient = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_ANON_KEY')!,
-    { global: { headers: { Authorization: authHeader } } }
-  )
-  const { data: { user }, error: authError } = await userClient.auth.getUser()
-  if (authError || !user) return json({ error: 'Invalid token' }, 401)
-
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+
+  const token = authHeader.replace('Bearer ', '')
+  const { data: { user }, error: authError } = await admin.auth.getUser(token)
+  if (authError || !user) return json({ error: 'Invalid token' }, 401)
 
   const { deliveryId, jobId } = await req.json()
   if (!deliveryId) return json({ error: 'deliveryId is required' }, 400)
