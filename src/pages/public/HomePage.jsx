@@ -324,6 +324,167 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* Why Buy From Local Farms */}
+      <div className="max-w-6xl mx-auto px-6 py-20">
+        <div className="grid md:grid-cols-2 gap-12 items-center">
+          <div>
+            <p className="text-green-700 font-semibold text-sm uppercase tracking-wider mb-3">Why local?</p>
+            <h2 className="text-3xl font-bold text-stone-800 mb-4 leading-tight" style={{ fontFamily: 'Georgia, serif' }}>
+              Fresh Food, Straight From the Source
+            </h2>
+            <p className="text-stone-600 leading-relaxed mb-6">
+              Most grocery store food travels hundreds of miles and can sit for weeks before reaching shelves.
+              Valley Farm Network connects you directly with local farms so you can enjoy food that's harvested fresh.
+            </p>
+            <ul className="space-y-3">
+              {['Fresher eggs and produce', 'Support local farms', 'Know where your food comes from'].map(item => (
+                <li key={item} className="flex items-center gap-3 text-stone-700">
+                  <span className="w-6 h-6 bg-green-100 rounded-full flex items-center justify-center shrink-0">
+                    <svg className="w-3.5 h-3.5 text-green-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </span>
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            {[
+              { emoji: '🌱', label: 'Grown locally' },
+              { emoji: '🚜', label: 'Direct from farmers' },
+              { emoji: '📅', label: 'Harvested fresh' },
+              { emoji: '❤️', label: 'Community supported' },
+            ].map(({ emoji, label }) => (
+              <div key={label} className="bg-gradient-to-br from-green-50 to-amber-50 rounded-2xl p-6 text-center border border-stone-100">
+                <div className="text-4xl mb-2">{emoji}</div>
+                <p className="text-stone-700 font-medium text-sm">{label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* What You'll Find */}
+      <div className="bg-stone-50 py-20">
+        <div className="max-w-6xl mx-auto px-6">
+          <div className="text-center max-w-2xl mx-auto mb-12">
+            <p className="text-green-700 font-semibold text-sm uppercase tracking-wider mb-3">Products</p>
+            <h2 className="text-3xl font-bold text-stone-800 mb-4" style={{ fontFamily: 'Georgia, serif' }}>
+              Fresh From Central Valley Farms
+            </h2>
+            <p className="text-stone-600">
+              Browse a variety of products grown and raised by local farmers.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+            {[
+              { emoji: '🥚', label: 'Farm Fresh Eggs' },
+              { emoji: '🥬', label: 'Microgreens' },
+              { emoji: '🥕', label: 'Seasonal Vegetables' },
+              { emoji: '🍯', label: 'Raw Honey' },
+              { emoji: '🐟', label: 'Farm Raised Fish' },
+              { emoji: '🍤', label: 'Fresh Shrimp' },
+            ].map(({ emoji, label }) => (
+              <div key={label} className="bg-white rounded-2xl p-5 text-center border border-stone-200 hover:border-green-300 hover:shadow-md transition-all">
+                <div className="text-4xl mb-2">{emoji}</div>
+                <p className="text-stone-700 font-medium text-sm">{label}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-center text-stone-400 text-sm">Products vary by farm and season.</p>
+        </div>
+      </div>
+
+      {/* Farm Subscriptions */}
+      <div className="max-w-6xl mx-auto px-6 py-20">
+        <div className="bg-gradient-to-br from-green-700 to-green-800 rounded-3xl p-10 md:p-14">
+          <div className="grid md:grid-cols-2 gap-10 items-center">
+            <div>
+              <p className="text-green-200 font-semibold text-sm uppercase tracking-wider mb-3">Subscriptions</p>
+              <h2 className="text-3xl font-bold text-white mb-4 leading-tight" style={{ fontFamily: 'Georgia, serif' }}>
+                Make Fresh Food Part of Your Routine
+              </h2>
+              <p className="text-green-100 mb-6 leading-relaxed">
+                Many farms offer subscriptions so you can receive fresh food every week.
+              </p>
+              <ul className="space-y-3 mb-8">
+                {['Weekly egg deliveries', 'Seasonal produce boxes', 'Farm pickup or delivery options'].map(item => (
+                  <li key={item} className="flex items-center gap-3 text-green-50">
+                    <span className="w-6 h-6 bg-white/15 rounded-full flex items-center justify-center shrink-0">
+                      <svg className="w-3.5 h-3.5 text-green-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-green-200 text-sm">Subscribe once and enjoy fresh food regularly.</p>
+            </div>
+            <div className="grid grid-cols-1 gap-4">
+              {[
+                { title: 'Weekly Eggs', desc: 'A dozen farm-fresh eggs every week', icon: '🥚' },
+                { title: 'Produce Box', desc: 'Seasonal vegetables picked fresh', icon: '🥕' },
+                { title: 'Honey Club', desc: 'Raw local honey delivered monthly', icon: '🍯' },
+              ].map(({ title, desc, icon }) => (
+                <div key={title} className="bg-white/10 rounded-2xl p-4 flex items-center gap-4">
+                  <div className="text-3xl shrink-0">{icon}</div>
+                  <div>
+                    <p className="font-semibold text-white">{title}</p>
+                    <p className="text-green-200 text-sm">{desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Real Farms, Real Food */}
+      <div className="bg-amber-50 py-20">
+        <div className="max-w-3xl mx-auto px-6 text-center">
+          <div className="text-5xl mb-6">🌾</div>
+          <h2 className="text-3xl font-bold text-stone-800 mb-5" style={{ fontFamily: 'Georgia, serif' }}>
+            Real Farms, Real Food
+          </h2>
+          <p className="text-stone-600 text-lg leading-relaxed mb-4">
+            Valley Farm Network connects customers across the Central Valley with farmers who grow and raise food with care.
+            Every product comes directly from a real farm in your region.
+          </p>
+          <p className="text-stone-500 leading-relaxed">
+            Support local farms while enjoying food that's fresh, simple, and close to home.
+          </p>
+        </div>
+      </div>
+
+      {/* Start Exploring CTA */}
+      <div className="max-w-6xl mx-auto px-6 py-20">
+        <div className="bg-white rounded-3xl border border-stone-200 shadow-sm p-10 md:p-16 text-center">
+          <p className="text-green-700 font-semibold text-sm uppercase tracking-wider mb-3">Get started</p>
+          <h2 className="text-3xl font-bold text-stone-800 mb-4" style={{ fontFamily: 'Georgia, serif' }}>
+            Find Fresh Food Near You
+          </h2>
+          <p className="text-stone-500 text-lg mb-8 max-w-xl mx-auto">
+            Browse farms in the Central Valley and see what's available this week.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <button
+              onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+              className="bg-green-700 hover:bg-green-600 text-white font-semibold px-8 py-3.5 rounded-2xl transition-colors shadow-md hover:shadow-lg"
+            >
+              Browse Farms
+            </button>
+            <button
+              onClick={() => navigate('/signup')}
+              className="bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold px-8 py-3.5 rounded-2xl transition-colors"
+            >
+              Create an Account
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Footer */}
       <footer className="bg-stone-100 py-12">
         <div className="max-w-6xl mx-auto px-6 text-center text-stone-500">
